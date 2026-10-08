@@ -1,0 +1,9 @@
+CREATE TABLE audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  action TEXT NOT NULL,
+  input TEXT NOT NULL,
+  jev TEXT,
+  outcome TEXT NOT NULL,
+  response TEXT NOT NULL
+);

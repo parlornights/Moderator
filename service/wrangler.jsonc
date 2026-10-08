@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "moderator",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "routes": [{ "pattern": "moderator.parlornights.com", "custom_domain": true }],
+  "workers_dev": false,
+  "d1_databases": [{ "binding": "DB", "database_name": "moderator", "database_id": "1b31552f-0e51-4fa1-92c0-dab14752b4ce", "migrations_dir": "migrations" }],
+  "observability": { "enabled": true }
+}
