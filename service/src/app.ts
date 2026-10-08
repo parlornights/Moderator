@@ -106,10 +106,14 @@ export function createApp(deps: Deps = realDeps) {
     return c.html(approvePage(row, JSON.parse(row.findings)));
   });
 
-  app.post('/approve/:owner/:repo/:sha', owner('Approve a commit', 'Posts a green test-integrity status for this commit only.'), async (c) => {
+  app.post('/approve/:owner/:repo/:sha', owner('Approve or reject a commit', 'Form fields `decision` (approve | reject) and optional `reason`. Approve: green for this commit only. Reject: stays red and the App comments the reason on the PR.'), async (c) => {
     const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
     if (!row) return c.text('No test-integrity run for this commit', 404);
-    await integrity.approve(c.env, deps.github(c.env), row, c.get('owner'));
+    const form = await c.req.parseBody();
+    const decision = form.decision;
+    if (decision !== 'approve' && decision !== 'reject') return c.text('decision must be approve or reject', 400);
+    const reason = typeof form.reason === 'string' ? form.reason.slice(0, 2_000) : undefined;
+    await integrity.decide(c.env, deps.github(c.env), row, { by: c.get('owner'), approve: decision === 'approve', reason });
     return c.redirect(c.req.path, 303);
   });
 
