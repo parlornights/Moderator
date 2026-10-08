@@ -37,8 +37,11 @@ const one = <T>(nodes: T[], what: string): T => {
 export function linear(apiKey: string): Linear {
   const c = new LinearClient({ apiKey });
 
-  const labelIds = async (names: string[] = []) =>
-    names.length ? (await c.issueLabels({ filter: { name: { in: names } } })).nodes.map((l) => l.id) : undefined;
+  // A label belongs to the issue's team or to the whole workspace; names can repeat across teams.
+  const labelIds = async (teamId: string, names: string[] = []) =>
+    names.length
+      ? (await c.issueLabels({ filter: { name: { in: names }, or: [{ team: { id: { eq: teamId } } }, { team: { null: true } }] } })).nodes.map((l) => l.id)
+      : undefined;
 
   return {
     async createIssue(i) {
@@ -53,14 +56,15 @@ export function linear(apiKey: string): Linear {
     async updateIssue(id, p) {
       const issue = await c.issue(id);
       const team = await issue.team;
-      const stateId = p.status && team ? one((await team.states({ filter: { name: { eqIgnoreCase: p.status } } })).nodes, `status ${p.status}`).id : undefined;
+      if (!team) throw new Error(`issue ${id} has no team`);
+      const stateId = p.status ? one((await team.states({ filter: { name: { eqIgnoreCase: p.status } } })).nodes, `status ${p.status}`).id : undefined;
       await c.updateIssue(issue.id, {
         title: p.title,
         description: p.description,
         priority: p.priority,
         stateId,
-        addedLabelIds: await labelIds(p.addLabels),
-        removedLabelIds: await labelIds(p.removeLabels),
+        addedLabelIds: await labelIds(team.id, p.addLabels),
+        removedLabelIds: await labelIds(team.id, p.removeLabels),
       });
       for (const l of p.links ?? []) await c.attachmentLinkURL(issue.id, l.url, { title: l.title });
       return { id: issue.identifier, url: issue.url };

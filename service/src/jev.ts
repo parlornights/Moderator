@@ -230,7 +230,12 @@ export const checks = {
       const { questions, samples } = judgeQuestions(Object.fromEntries(keys.map((k) => [k, QUESTION_SAMPLES[k]])));
       return { state: { open_questions: i.open_questions.trim() || '(none)', last_message: i.last_message, samples }, questions };
     },
-    decide: (a, i) => judgeResult(a, i.open_questions.trim() ? ['wellFormed', 'repeated', 'asksOwner'] : ['asksOwner']),
+    decide: (a, i) => {
+      const { checks } = judgeResult(a, i.open_questions.trim() ? ['wellFormed', 'repeated', 'asksOwner'] : ['asksOwner']);
+      const { asksOwner, ...questions } = checks;
+      // pass: the open questions are whole and repeated; asking: the message asks the owner for a decision.
+      return { pass: Object.values(questions).every((c) => c.pass), asking: asksOwner.pass, checks };
+    },
   }),
 
   'needs-decision': judged(z.object({ escalation: z.string().min(1).max(4_000) }), {

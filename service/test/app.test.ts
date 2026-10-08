@@ -66,7 +66,14 @@ describe('POST /tool/jev/:check', () => {
     answers = { asksOwner: { noul: 0.9 } };
     const res = await call('/tool/jev/open-questions', { method: 'POST', json: { open_questions: '  ', last_message: 'Which icon?' } });
     expect(Object.keys(asked[0].questions)).toEqual(['asksOwner']);
-    expect(await res.json()).toMatchObject({ result: { pass: true, checks: { asksOwner: { pass: true, p: 0.9 } } } });
+    expect(await res.json()).toMatchObject({ result: { pass: true, asking: true, checks: { asksOwner: { pass: true, p: 0.9 } } } });
+  });
+
+  it('fails open questions that are not repeated, apart from asking', async () => {
+    answers = { wellFormed: { noul: 0.9 }, repeated: { noul: 0.1 }, asksOwner: { noul: 0.1 } };
+    const res = await call('/tool/jev/open-questions', { method: 'POST', json: { open_questions: '- Q1: x?', last_message: 'done' } });
+    expect(Object.keys(asked[0].questions)).toEqual(['wellFormed', 'repeated', 'asksOwner']);
+    expect(await res.json()).toMatchObject({ result: { pass: false, asking: false } });
   });
 
   it('sends the samples with the text it judges', async () => {

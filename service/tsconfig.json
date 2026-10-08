@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src", "test", "smoke", "vitest.config.ts"]
 }

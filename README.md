@@ -30,4 +30,5 @@ pnpm install
 pnpm test        # vitest in the Workers runtime, real D1
 pnpm typecheck
 pnpm deploy      # applies D1 migrations, then deploys
+MODERATOR_KEY=<key> pnpm smoke   # live test of the deployed Worker; files one Linear test issue and cancels it
 ```

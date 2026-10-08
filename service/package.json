@@ -6,7 +6,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke": "vitest run --config smoke/vitest.config.ts"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.9.1",
