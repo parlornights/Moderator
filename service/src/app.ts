@@ -36,7 +36,7 @@ export const realDeps: Deps = {
 
 const PR_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']);
 
-const issueBody = z.object({ team: z.string().min(1), title: z.string().min(1), description: z.string(), project: z.string().optional(), parent: z.string().optional() });
+const issueBody = z.object({ id: z.uuid().optional(), team: z.string().min(1), title: z.string().min(1), description: z.string(), project: z.string().optional(), parent: z.string().optional() });
 const patchBody = z.object({
   title: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
@@ -46,7 +46,7 @@ const patchBody = z.object({
   removeLabels: z.array(z.string()).optional(),
   links: z.array(z.object({ url: z.url(), title: z.string().min(1) })).optional(),
 });
-const commentBody = z.object({ issue: z.string().min(1), body: z.string().min(1) });
+const commentBody = z.object({ id: z.uuid().optional(), issue: z.string().min(1), body: z.string().min(1) });
 
 const valid = <T extends z.ZodType>(target: 'json' | 'query', schema: T) =>
   validator(target, schema, (r, c) => (r.success ? undefined : c.json({ error: z.prettifyError(new z.ZodError(r.error as z.core.$ZodIssue[])) }, 400)));
@@ -81,13 +81,17 @@ export function createApp(deps: Deps = realDeps) {
   app.use('/github/setup', ownerOnly);
   app.use('/github/created', ownerOnly);
 
-  app.post('/github/webhook', describeRoute({ tags: ['GitHub'], summary: 'GitHub App webhook', description: 'pull_request events (opened, synchronize, reopened, ready_for_review) run test-integrity. Signed by GitHub with GITHUB_WEBHOOK_SECRET.', security: [] }), async (c) => {
+  app.post('/github/webhook', describeRoute({ tags: ['GitHub'], summary: 'GitHub App webhook', description: 'pull_request events (opened, synchronize, reopened, ready_for_review) run the test-integrity check run. Signed by GitHub with GITHUB_WEBHOOK_SECRET.', security: [] }), async (c) => {
     const body = await c.req.text();
     const signature = c.req.header('X-Hub-Signature-256');
     if (!signature || !(await deps.github(c.env).verifyWebhook(body, signature))) return c.json({ error: 'bad signature' }, 401);
     const event = JSON.parse(body) as integrity.PullRequestEvent & { action?: string };
     if (c.req.header('X-GitHub-Event') !== 'pull_request' || !PR_ACTIONS.has(event.action ?? '')) return c.json({ ignored: true });
-    const run = integrity.check(c.env, { github: deps.github(c.env), linear: deps.linear(c.env), jev: deps.jev(c.env) }, event).catch((e) => console.error('test-integrity failed', e));
+    const gh = deps.github(c.env);
+    const run = integrity
+      .check(c.env, { github: gh, linear: deps.linear(c.env), jev: deps.jev(c.env) }, event)
+      .catch((err) => integrity.errored(c.env, gh, event, err))
+      .catch((err) => console.error('test-integrity failed and could not report it', err));
     c.executionCtx.waitUntil(run);
     return c.json({ queued: true }, 202);
   });
@@ -106,7 +110,7 @@ export function createApp(deps: Deps = realDeps) {
     return c.html(approvePage(row, JSON.parse(row.findings)));
   });
 
-  app.post('/approve/:owner/:repo/:sha', owner('Approve or reject a commit', 'Form fields `decision` (approve | reject) and optional `reason`. Approve: green for this commit only. Reject: stays red and the App comments the reason on the PR.'), async (c) => {
+  app.post('/approve/:owner/:repo/:sha', owner('Approve or reject a commit', 'Form fields `decision` (approve | reject) and optional `reason`. Approve: the check turns green for this commit only. Reject: it fails and the App comments the reason on the PR.'), async (c) => {
     const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
     if (!row) return c.text('No test-integrity run for this commit', 404);
     const form = await c.req.parseBody();
@@ -185,7 +189,7 @@ export function createApp(deps: Deps = realDeps) {
 
   app.post('/tool/linear/comment', tool('Comment on a Linear issue', `Jev checks it is a settled product update. ${LINEAR_OUTCOME}`), valid('json', commentBody), async (c) => {
     const i = c.req.valid('json');
-    return c.json(await gatedWrite(c.env, 'linear/comment', i, { check: 'linear-comment', text: { body: i.body } }, () => deps.linear(c.env).comment(i.issue, i.body)));
+    return c.json(await gatedWrite(c.env, 'linear/comment', i, { check: 'linear-comment', text: { body: i.body } }, () => deps.linear(c.env).comment(i.issue, i.body, i.id)));
   });
 
   app.get('/audit', tool('The audit log', 'Every tool call, webhook run and approval, newest first. Page back with `before=<id>`.'), valid('query', z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), before: z.coerce.number().int().optional() })), async (c) => {

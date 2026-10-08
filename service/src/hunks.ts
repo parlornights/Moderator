@@ -1,6 +1,6 @@
 import picomatch from 'picomatch';
 
-/** Paths that hold tests, their fixtures and snapshots. */
+/** Paths that hold tests, their fixtures, snapshots, mocks, helpers and the config that decides what runs. */
 export const TEST_GLOBS = [
   '**/__tests__/**',
   '**/test/**',
@@ -13,6 +13,17 @@ export const TEST_GLOBS = [
   '**/__snapshots__/**',
   '**/*.snap',
   '**/*-snapshots/**',
+  '**/mock/**',
+  '**/mocks/**',
+  '**/__mocks__/**',
+  '**/test-support/**',
+  '**/test-utils/**',
+  '**/vitest.config.*',
+  '**/vitest.setup.*',
+  '**/vitest.workspace.*',
+  '**/jest.config.*',
+  '**/jest.setup.*',
+  '**/playwright.config.*',
 ];
 
 export const isTestPath = picomatch(TEST_GLOBS, { dot: true });

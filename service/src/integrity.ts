@@ -1,9 +1,9 @@
 import * as audit from './audit';
 import type { Env } from './env';
-import { CONTEXT, type GitHub, type Status } from './github';
+import { CONTEXT, type Check, type GitHub } from './github';
 import { existingTestHunks, type Hunk } from './hunks';
 import type { Answers, Ask, Question } from './jev';
-import type { Issue, Linear } from './linear';
+import type { Linear, Ticket } from './linear';
 
 /** A hunk is flagged when Jev's probability that the ticket sanctions it falls below this. */
 export const SANCTIONED = 0.5;
@@ -19,7 +19,7 @@ export interface Finding extends Hunk {
 export interface PullRequestEvent {
   installation: { id: number };
   repository: { name: string; full_name: string; owner: { login: string } };
-  pull_request: { number: number; title: string; head: { sha: string }; user: { login: string } };
+  pull_request: { number: number; title: string; head: { sha: string }; user: { login: string }; created_at: string; changed_files: number };
 }
 
 /** Two of each, so the samples do not lean either way. */
@@ -70,10 +70,10 @@ function batches(hunks: Hunk[]): Hunk[][] {
  * Judges every hunk that changes an existing test against the PR's ticket. Null: Jev did not answer, so the caller
  * flags everything. A file GitHub shows no diff for is flagged: Jev cannot judge what it cannot read.
  */
-export async function judge(ask: Ask, ticket: Issue | null, hunks: Hunk[]): Promise<Finding[] | null> {
+export async function judge(ask: Ask, ticket: Ticket | null, hunks: Hunk[]): Promise<Finding[] | null> {
   const p = new Map<Hunk, number>();
   for (const batch of batches(hunks.filter((h) => h.patch !== null))) {
-    const state = { ticket: ticket ?? '(the PR names no ticket)', hunks: batch.map((h) => ({ file: h.file, status: h.status, patch: h.patch })), samples: SAMPLES };
+    const state = { ticket: ticket ?? '(no ticket text written before this work began)', hunks: batch.map((h) => ({ file: h.file, status: h.status, patch: h.patch })), samples: SAMPLES };
     const answers: Answers | null = await ask(state, Object.fromEntries(batch.map((h, n) => [`h${n + 1}`, question(n, h)])));
     if (!answers) return null;
     batch.forEach((h, n) => p.set(h, Math.round((answers[`h${n + 1}`]?.noul ?? 0) * 100) / 100));
@@ -93,45 +93,88 @@ export interface IntegrityDeps {
 
 const approveUrl = (env: Env, repo: string, sha: string) => `${env.PUBLIC_URL}/approve/${repo}/${sha}`;
 
-/** Runs the check for one PR head and posts the `test-integrity` status. */
-export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent): Promise<void> {
+/**
+ * When the PR's work began: the earliest of GitHub's own PR creation time and every commit date. Commit dates are set
+ * by whoever commits; backdating one only makes this earlier, which counts less ticket text.
+ */
+export async function workStart(gh: GitHub, e: PullRequestEvent): Promise<Date> {
+  const dates = await gh.commitDates(e.installation.id, e.repository.owner.login, e.repository.name, e.pull_request.number);
+  return new Date(Math.min(Date.parse(e.pull_request.created_at), ...dates.map(Date.parse).filter((d) => !Number.isNaN(d))));
+}
+
+interface Run {
+  state: 'success' | 'failure';
+  title: string;
+  flagged: Finding[];
+  hunks: number;
+  issue: string | null;
+}
+
+/** Records a run unless the owner already decided this commit; false when they had. */
+async function save(env: Env, e: PullRequestEvent, run: Run): Promise<boolean> {
+  const { meta } = await env.DB.prepare(
+    `INSERT INTO integrity (repo, sha, installation_id, pr, title, issue, state, findings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (repo, sha) DO UPDATE SET installation_id = excluded.installation_id, pr = excluded.pr, title = excluded.title, issue = excluded.issue, state = excluded.state, findings = excluded.findings, created_at = excluded.created_at
+     WHERE integrity.state NOT IN ('approved', 'rejected')`,
+  )
+    .bind(e.repository.full_name, e.pull_request.head.sha, e.installation.id, e.pull_request.number, e.pull_request.title, run.issue, run.state, JSON.stringify(run.flagged), new Date().toISOString())
+    .run();
+  return meta.changes > 0;
+}
+
+/** Posts the check for a run, comments on the PR when it needs the owner, and audits it. */
+async function publish(env: Env, gh: GitHub, e: PullRequestEvent, run: Run): Promise<void> {
   const { installation, repository, pull_request: pr } = e;
   const [owner, repo, sha] = [repository.owner.login, repository.name, pr.head.sha];
-  const targetUrl = approveUrl(env, repository.full_name, sha);
+  const detailsUrl = approveUrl(env, repository.full_name, sha);
+  if (!(await save(env, e, run))) {
+    // The owner decided this commit while the run was in flight: their decision stands.
+    const row = await getRow(env.DB, repository.full_name, sha);
+    if (row) await gh.setCheck(installation.id, owner, repo, sha, decisionCheck(env, row));
+    return;
+  }
+  const summary = run.flagged.map((f) => `- \`${f.file}\`${f.p === null ? '' : ` (sanctioned p=${f.p})`}: ${f.reason}`).join('\n') || run.title;
+  await gh.setCheck(installation.id, owner, repo, sha, { conclusion: run.state === 'success' ? 'success' : 'action_required', title: run.title, summary, detailsUrl });
+  await audit.record(env.DB, { action: `github/${CONTEXT}`, input: { repo: repository.full_name, pr: pr.number, sha, issue: run.issue, hunks: run.hunks }, jev: run.flagged, outcome: run.state, response: { title: run.title } });
+  if (run.state === 'failure') await commentSafely(gh, installation.id, owner, repo, pr.number, `@${pr.user.login} **test-integrity** on ${short(sha)}: ${run.title}.\n\n${summary}\n\nApprove or reject: ${detailsUrl}`);
+}
 
-  const prior = await getRow(env.DB, repository.full_name, sha);
+/** Runs the check for one PR head and posts the `test-integrity` check run. */
+export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent): Promise<void> {
+  const { installation, repository, pull_request: pr } = e;
+  const prior = await getRow(env.DB, repository.full_name, pr.head.sha);
   if (prior?.state === 'approved' || prior?.state === 'rejected') {
-    await deps.github.setStatus(installation.id, owner, repo, sha, decisionStatus(env, prior));
+    await deps.github.setCheck(installation.id, repository.owner.login, repository.name, pr.head.sha, decisionCheck(env, prior));
     return;
   }
 
-  const hunks = existingTestHunks(await deps.github.pullFiles(installation.id, owner, repo, pr.number));
+  const files = await deps.github.pullFiles(installation.id, repository.owner.login, repository.name, pr.number);
+  const hunks = existingTestHunks(files);
   const issue = issueIdIn(pr.title);
-  const findings = hunks.length ? await judge(deps.jev, issue ? await deps.linear.getIssue(issue) : null, hunks) : [];
+  const ticket = issue && hunks.length ? await deps.linear.ticketBefore(issue, await workStart(deps.github, e)) : null;
+  const findings = hunks.length ? await judge(deps.jev, ticket, hunks) : [];
   const flagged = findings ?? hunks.map((h): Finding => ({ ...h, p: null, reason: 'Jev did not answer' }));
-  const state = flagged.length ? 'failure' : 'success';
-  const description = !hunks.length
-    ? 'No existing test changed'
-    : findings === null
+  if (files.length < pr.changed_files)
+    flagged.push({ file: '(whole PR)', status: 'unlisted', patch: null, p: null, reason: `GitHub listed ${files.length} of the PR's ${pr.changed_files} files, so the rest were not checked` });
+  const title = flagged.length
+    ? findings === null
       ? "Jev did not answer: the owner's decision is needed"
-      : flagged.length
-        ? `${flagged.length} test change(s) need the owner's decision`
-        : `${hunks.length} test change(s), all sanctioned`;
+      : `${flagged.length} test change(s) need the owner's decision`
+    : hunks.length
+      ? `${hunks.length} test change(s), all sanctioned`
+      : 'No existing test changed';
+  await publish(env, deps.github, e, { state: flagged.length ? 'failure' : 'success', title, flagged, hunks: hunks.length, issue });
+}
 
-  await env.DB.prepare(
-    `INSERT INTO integrity (repo, sha, installation_id, pr, title, issue, state, findings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (repo, sha) DO UPDATE SET installation_id = excluded.installation_id, pr = excluded.pr, title = excluded.title, issue = excluded.issue, state = excluded.state, findings = excluded.findings, created_at = excluded.created_at`,
-  )
-    .bind(repository.full_name, sha, installation.id, pr.number, pr.title, issue, state, JSON.stringify(flagged), new Date().toISOString())
-    .run();
-  await deps.github.setStatus(installation.id, owner, repo, sha, { state, description, targetUrl });
-  await audit.record(env.DB, { action: `github/${CONTEXT}`, input: { repo: repository.full_name, pr: pr.number, sha, issue, hunks: hunks.length }, jev: flagged, outcome: state, response: { description } });
-  if (state === 'failure') await commentSafely(deps.github, installation.id, owner, repo, pr.number, redComment(pr.user.login, sha, description, flagged, targetUrl));
+/** A run that threw still leaves a red check and a row, so the PR does not wait forever and the owner can decide. */
+export async function errored(env: Env, gh: GitHub, e: PullRequestEvent, err: unknown): Promise<void> {
+  const reason = `The check errored: ${err instanceof Error ? err.message : String(err)}`;
+  await publish(env, gh, e, { state: 'failure', title: "The check errored: the owner's decision is needed", flagged: [{ file: '(check)', status: 'error', patch: null, p: null, reason }], hunks: 0, issue: issueIdIn(e.pull_request.title) });
 }
 
 const short = (sha: string) => sha.slice(0, 7);
 
-/** The status and the record are what count; a comment that fails is logged, not retried. */
+/** The check and the record are what count; a comment that fails is logged, not retried. */
 async function commentSafely(gh: GitHub, installationId: number, owner: string, repo: string, pr: number, body: string) {
   try {
     await gh.comment(installationId, owner, repo, pr, body);
@@ -140,17 +183,11 @@ async function commentSafely(gh: GitHub, installationId: number, owner: string, 
   }
 }
 
-/** Mentions the PR's author, so GitHub notifies them. */
-function redComment(author: string, sha: string, description: string, flagged: Finding[], url: string) {
-  const lines = flagged.map((f) => `- \`${f.file}\`${f.p === null ? '' : ` (sanctioned p=${f.p})`}: ${f.reason}`);
-  return [`@${author} **test-integrity** on ${short(sha)}: ${description}.`, '', ...lines, '', `Approve or reject: ${url}`].join('\n');
-}
-
-function decisionStatus(env: Env, row: IntegrityRow): Status {
-  const targetUrl = approveUrl(env, row.repo, row.sha);
+function decisionCheck(env: Env, row: IntegrityRow): Check {
+  const detailsUrl = approveUrl(env, row.repo, row.sha);
   return row.state === 'approved'
-    ? { state: 'success', description: `Approved by ${row.decided_by}`, targetUrl }
-    : { state: 'failure', description: `Rejected by the owner${row.reason ? `: ${row.reason}` : ''}`, targetUrl };
+    ? { conclusion: 'success', title: `Approved by ${row.decided_by}`, summary: `The owner approved the test changes in ${row.sha}.`, detailsUrl }
+    : { conclusion: 'failure', title: `Rejected by the owner${row.reason ? `: ${row.reason}` : ''}`, summary: row.reason ?? 'Rejected without a reason.', detailsUrl };
 }
 
 export interface IntegrityRow {
@@ -179,7 +216,7 @@ export async function decide(env: Env, gh: GitHub, row: IntegrityRow, d: { by: s
   await env.DB.prepare('UPDATE integrity SET state = ?, decided_by = ?, decided_at = ?, reason = ? WHERE repo = ? AND sha = ?')
     .bind(decided.state, decided.decided_by, decided.decided_at, decided.reason, row.repo, row.sha)
     .run();
-  await gh.setStatus(row.installation_id, owner, repo, row.sha, decisionStatus(env, decided));
+  await gh.setCheck(row.installation_id, owner, repo, row.sha, decisionCheck(env, decided));
   if (!d.approve) {
     const body = [`The owner **rejected** the test changes in ${short(row.sha)}.`, decided.reason ? `\n> ${decided.reason.replace(/\n/g, '\n> ')}` : '', '\nRevert or rework them, then push; the new commit is checked again.'].join('\n');
     await commentSafely(gh, row.installation_id, owner, repo, row.pr, body);
