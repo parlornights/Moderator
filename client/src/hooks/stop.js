@@ -59,8 +59,9 @@ export default async function stop(input) {
   const b = branch();
   const issue = issueId();
   if (isMainBranch(b) || !issue) return;
-  // The agent stopped in the middle of a merge (to ask about a conflict, say): commit and push nothing until it ends.
-  if (operationInProgress()) return;
+  // The agent stopped in the middle of a merge (to ask about a conflict, say): the checks run, but nothing is
+  // committed or pushed until the merge ends, so no conflict marker leaves the machine.
+  const midMerge = operationInProgress();
 
   // Running units, read from the session transcript: each needs an armed check-in and a watched PR, and one that
   // stalled or whose PR merged is named. The second pass skips GitHub. running.json is the fallback.
@@ -86,8 +87,10 @@ export default async function stop(input) {
   }
   if (running > 0) return unitTodo.length ? block(`Before stopping (units):\n- ${unitTodo.join('\n- ')}\nThen stop again.`) : undefined;
 
-  git(['add', '-A']);
-  git(['commit', '-q', '-m', `wip(${issue}): checkpoint`]);
+  if (!midMerge) {
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', `wip(${issue}): checkpoint`]);
+  }
 
   const why = staleness();
   /** @type {string | undefined} */
@@ -112,7 +115,7 @@ export default async function stop(input) {
   }
 
   // Nothing new since the last push (a turn that only read): write nothing, so no commit re-runs the PR's CI.
-  if (git(['rev-list', '--count', '@{u}..HEAD']) !== '0') {
+  if (!midMerge && git(['rev-list', '--count', '@{u}..HEAD']) !== '0') {
     // The event goes in before the commit, so the turn ends on a clean tree; only a failed push leaves a line.
     appendEvent('stop', { stale: why || null });
     writeHandoff({ transcriptPath: input.transcript_path, source: 'stop' });

@@ -147,6 +147,7 @@ test('in the middle of a merge it commits and pushes nothing, so no conflict mar
   assert.throws(() => r.git('merge', '-q', 'other'));
   const head = r.git('rev-parse', 'HEAD');
   const pushed = r.remoteHead();
+  assert.match((await stop({ transcript_path: transcript(r.scratch, []) })).reason, /CD-7 was not read/, 'the checks still run');
   assert.equal(await stop({ stop_hook_active: true }), null);
   assert.equal(r.git('rev-parse', 'HEAD'), head);
   assert.equal(r.remoteHead(), pushed);

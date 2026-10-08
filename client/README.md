@@ -31,8 +31,8 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
       { "matcher": "Artifact", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "post-artifact"], "timeout": 10 }] },
       { "matcher": "*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "context-watch"], "timeout": 10 }] }
     ],
-    "SubagentStart": [{ "matcher": "^(moderator:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-start"], "timeout": 10 }] }],
-    "SubagentStop": [{ "matcher": "^(moderator:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-stop"], "timeout": 2400 }] }],
+    "SubagentStart": [{ "matcher": "^([\\w-]+:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-start"], "timeout": 10 }] }],
+    "SubagentStop": [{ "matcher": "^([\\w-]+:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-stop"], "timeout": 2400 }] }],
     "PreCompact": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "pre-compact"], "timeout": 30 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "stop"], "timeout": 120 }] }]
   }
@@ -50,11 +50,13 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 | `pre-compact` | Writes and commits the note's auto block before a compaction. |
 | `stop` | Commits a checkpoint, holds the turn once for what is left (units without a check-in, open questions Jev reads as not whole or not repeated, a stale note, the issue not read on Linear, an unlinked artifact, a hand-over due), then pushes the branch. |
 
-A hook never stops a session over its own bug or a broken config: it does nothing, and tells the user so in one line,
-since the protocol is off until it is fixed. Jev not answering never blocks: the check is skipped and the Stop hook
-says so. The Stop hook commits and pushes nothing while a merge, cherry-pick or revert is unfinished.
+A hook never stops a session over its own bug or a broken config: it does nothing, and session-start, stop and
+subagent-stop tell the user so in one line, since the protocol is off until it is fixed. Jev not answering never blocks: the check is skipped and the Stop hook
+says so. The Stop hook commits and pushes nothing while a merge, cherry-pick or revert is unfinished; its checks still
+run.
 
-A unit is the `unit` or `unit-deep` agent, or the same from a plugin (`moderator:unit`); the matchers above take both.
+A unit is the `unit` or `unit-deep` agent, or the same from a plugin (`moderator:unit`); the matchers above take both,
+whatever the plugin is called, as the hooks do.
 
 The issue is the one the branch name carries (`issuePattern`); a branch without one gets no ledger, and the hooks
 stay quiet there. The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, the gate's results and logs.

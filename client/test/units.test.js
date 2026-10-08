@@ -112,3 +112,15 @@ test('a wait is a sleep or a sleeping loop; quoted text and other work are told 
     assert.equal(isPureWait(cmd), pure, `isPureWait: ${cmd}`);
   }
 });
+
+test("the README's SubagentStart and SubagentStop matchers pick the same agents as isUnitType", async () => {
+  const { isUnitType } = await import('../src/units.js');
+  const readme = (await import('node:fs')).readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const hooks = JSON.parse(readme.match(/```json\n(\{\n {2}"hooks"[\s\S]*?)\n```/)[1]).hooks;
+  for (const event of ['SubagentStart', 'SubagentStop']) {
+    const matcher = new RegExp(hooks[event][0].matcher);
+    for (const type of ['unit', 'unit-deep', 'moderator:unit', 'acme:unit-deep', 'reviewer', 'Explore', 'community-unit', 'unit2', 'moderator:reviewer']) {
+      assert.equal(matcher.test(type), isUnitType(type), `${event} ${type}`);
+    }
+  }
+});

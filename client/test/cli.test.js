@@ -107,4 +107,6 @@ test('help lists the commands; an unknown command is an error; a hook bug never 
   assert.equal(out.status, 0);
   assert.match(out.stderr, /moderator hook session-start failed: .*moderator\.config\.json/);
   assert.match(out.json.systemMessage, /^moderator hook session-start failed: moderator\.config\.json: /, 'the user sees it: the protocol is off');
+  const everyCall = await hook('context-watch', { tool_name: 'Bash' }, { cwd: r.dir });
+  assert.deepEqual([everyCall.status, everyCall.json], [0, null], 'a hook on every tool call does not repeat it');
 });

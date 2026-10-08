@@ -204,9 +204,10 @@ const commands = {
     try {
       r = await (await import(`../src/hooks/${name}.js`)).default(i);
     } catch (e) {
-      // A bug in a hook, or a broken config, never stops the session; the user is told, since the protocol is off.
+      // A bug in a hook, or a broken config, never stops the session. The user is told, since the protocol is off,
+      // by the hooks that run once a turn; the ones that run on every tool call would repeat it after each.
       process.stderr.write(`moderator hook ${name} failed: ${e instanceof Error ? e.stack : e}\n`);
-      process.stdout.write(JSON.stringify({ systemMessage: `moderator hook ${name} failed: ${e instanceof Error ? e.message : e}` }));
+      if (['session-start', 'stop', 'subagent-stop'].includes(name)) process.stdout.write(JSON.stringify({ systemMessage: `moderator hook ${name} failed: ${e instanceof Error ? e.message : e}` }));
       return 0;
     }
     if (r?.json) process.stdout.write(JSON.stringify(r.json));
