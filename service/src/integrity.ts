@@ -1,7 +1,7 @@
 import * as audit from './audit';
 import type { Env } from './env';
 import { CONTEXT, type Check, type GitHub } from './github';
-import { existingTestHunks, hunkHash, type Hunk } from './hunks';
+import { diffHash, existingTestHunks, hunkHash, type Hunk } from './hunks';
 import type { Answers, Ask, Question } from './jev';
 import type { Linear, Ticket } from './linear';
 
@@ -158,7 +158,7 @@ function checkFor(env: Env, row: IntegrityRow): Check {
   const findings = JSON.parse(row.findings) as Finding[];
   switch (row.state) {
     case 'approved':
-      return { conclusion: 'success', title: `Approved by ${row.decided_by}`, summary: `Approved for ${row.sha}.`, detailsUrl };
+      return { conclusion: 'success', title: `Approved by ${row.decided_by}`, summary: row.reason ?? `Approved for ${row.sha}.`, detailsUrl };
     case 'rejected':
       return { conclusion: 'failure', title: `Rejected by the owner${row.reason ? `: ${row.reason}` : ''}`, summary: row.reason ?? 'Rejected without a reason.', detailsUrl };
     case 'success':
@@ -196,6 +196,9 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
   await publish(env, deps.github, e, { state: 'pending', result: 'Checking test changes', findings: [{ file: '(check)', status: 'pending', patch: null, p: null, reason: 'The check started but has not finished; decide from the PR diff' }], issue });
 
   const { files, commitDates } = await deps.github.compare(e.installation.id, owner, repo, e.pull_request.base.sha, k.sha);
+  const fingerprint = await diffHash(files);
+  await env.DB.prepare('UPDATE integrity SET diff_hash = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(fingerprint, k.repo, k.pr, k.sha).run();
+  if (await carryApproval(env, deps.github, e, fingerprint)) return;
   const hunks = existingTestHunks(files);
   const sticky = new Set(
     (await env.DB.prepare('SELECT hash FROM flags WHERE repo = ? AND pr = ?').bind(k.repo, k.pr).all<{ hash: string }>()).results.map((r) => r.hash),
@@ -221,6 +224,29 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
       ? `${hunks.length} test change(s), all sanctioned`
       : 'No existing test changed';
   await publish(env, deps.github, e, { state: findings.length ? 'failure' : 'success', result, findings, issue });
+}
+
+/**
+ * A push that only brings the base branch into the PR leaves the PR's own diff as it was; an approval of that same diff
+ * on this PR and base carries over (owner, Q34 A). Any change to the PR's own diff needs a new decision.
+ */
+async function carryApproval(env: Env, gh: GitHub, e: PullRequestEvent, fingerprint: string): Promise<boolean> {
+  const k = keyOf(e);
+  const earlier = await env.DB.prepare(
+    "SELECT sha, decided_by FROM integrity WHERE repo = ? AND pr = ? AND base_ref = ? AND diff_hash = ? AND state = 'approved' AND sha != ? ORDER BY decided_at DESC LIMIT 1",
+  )
+    .bind(k.repo, k.pr, e.pull_request.base.ref, fingerprint, k.sha)
+    .first<{ sha: string; decided_by: string }>();
+  if (!earlier) return false;
+  const { meta } = await env.DB.prepare(
+    "UPDATE integrity SET state = 'approved', decided_by = ?, decided_at = ?, reason = ?, result = ?, findings = '[]' WHERE repo = ? AND pr = ? AND sha = ? AND state NOT IN ('approved', 'rejected')",
+  )
+    .bind(earlier.decided_by, new Date().toISOString(), `Carried from ${short(earlier.sha)}: the PR's own diff is unchanged`, 'Approval carried over', k.repo, k.pr, k.sha)
+    .run();
+  const row = await getRow(env.DB, k);
+  if (row) await gh.setCheck(e.installation.id, e.repository.owner.login, e.repository.name, k.sha, checkFor(env, row));
+  if (meta.changes > 0) await audit.record(env.DB, { action: `carry/${CONTEXT}`, input: { ...k, from: earlier.sha }, outcome: 'approved', response: { by: earlier.decided_by } });
+  return true;
 }
 
 /** A run that threw still leaves a red check and a row, so the PR does not wait forever and the owner can decide. */
@@ -251,6 +277,7 @@ export interface IntegrityRow extends Key {
   decided_by: string | null;
   decided_at: string | null;
   reason: string | null;
+  diff_hash: string | null;
 }
 
 export const getRow = (db: D1Database, k: Key) => db.prepare('SELECT * FROM integrity WHERE repo = ? AND pr = ? AND sha = ?').bind(k.repo, k.pr, k.sha).first<IntegrityRow>();

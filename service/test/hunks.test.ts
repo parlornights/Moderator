@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { existingTestHunks, isTestPath, splitPatch } from '../src/hunks';
+import { diffHash, existingTestHunks, isTestPath, splitPatch } from '../src/hunks';
 
 describe('isTestPath', () => {
   it('knows test files, fixtures and snapshots', () => {
@@ -33,5 +33,17 @@ describe('existingTestHunks', () => {
       ['renamed.ts', '@@ -1 +1 @@\n-p\n+q'],
       ['e2e/home.spec.ts-snapshots/home.png', null],
     ]);
+  });
+});
+
+describe('diffHash', () => {
+  it('ignores line numbers and order, and changes with any changed line, file or status', async () => {
+    const a = { filename: 'a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-x\n+y' };
+    const b = { filename: 'b.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+z' };
+    const base = await diffHash([a, b]);
+    expect(await diffHash([b, { ...a, patch: '@@ -40 +40 @@\n-x\n+y' }])).toBe(base);
+    expect(await diffHash([a, { ...b, patch: '@@ -0,0 +1 @@\n+w' }])).not.toBe(base);
+    expect(await diffHash([a])).not.toBe(base);
+    expect(await diffHash([{ ...a, status: 'renamed' }, b])).not.toBe(base);
   });
 });

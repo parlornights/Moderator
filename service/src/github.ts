@@ -54,7 +54,7 @@ export function github(env: Env): GitHub {
       const octokit = await app.getInstallationOctokit(installationId);
       const { data } = await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', { owner, repo, basehead: `${base}...${head}` });
       return {
-        files: (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch })),
+        files: (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch, sha: f.patch ? undefined : (f.sha ?? undefined) })),
         commitDates: data.commits.flatMap((c) => [c.commit.author?.date, c.commit.committer?.date].filter((d): d is string => !!d)),
       };
     },

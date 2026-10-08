@@ -34,7 +34,7 @@ branch rules):
   fewer files than the PR changed, or when the check itself errors. The App then comments on the PR, mentioning its
   author, with the flagged hunks and a link to `/approve/<owner>/<repo>/<sha>`.
 
-On that page the owner approves (success for that commit only) or rejects with an optional reason (failure; the App
+On that page the owner approves (success for that commit, and for later commits of the same PR and base whose own diff is unchanged, such as a merge of the base branch) or rejects with an optional reason (failure; the App
 posts the reason on the PR). A new push runs the check again.
 
 The owner pages (`/approve/*`, `/github/setup`, `/github/created`) sit behind Cloudflare Access (application "Moderator

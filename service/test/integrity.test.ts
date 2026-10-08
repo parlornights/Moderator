@@ -59,7 +59,9 @@ const decide = (sha: string, form: string) =>
 const changed: ChangedFile = { filename: 'src/__tests__/score.test.ts', status: 'modified', patch: '@@ -1 +1 @@\n-  expect(total).toBe(120);\n+  expect(total).toBeGreaterThan(0);' };
 
 beforeEach(async () => {
+  // Approvals carry across a PR's commits, so each test starts from an empty record.
   await env.DB.exec('DELETE FROM flags');
+  await env.DB.exec('DELETE FROM integrity');
   answers = null;
   asked = [];
   files = [];
@@ -192,6 +194,28 @@ describe('decisions belong to one PR and base', () => {
     expect(checks.at(-1)?.check.conclusion).toBe('action_required');
   });
 
+  it("carries an approval to a push that leaves the PR's own diff unchanged, and not to one that changes it", async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('m1'));
+    await decide('m1', 'decision=approve');
+
+    // Mergify merges main into the PR: new head, same PR diff.
+    await hook(event('m2'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'm2', check: { conclusion: 'success', title: 'Approved by owner@example.com', summary: expect.stringContaining('Carried from m1') } });
+    expect(asked).toHaveLength(1);
+
+    // The agent then changes its own diff: a new decision is needed.
+    files = [changed, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    await hook(event('m3'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'm3', check: { conclusion: 'action_required' } });
+
+    // Not carried to another base branch either.
+    files = [changed];
+    await hook(event('m4', 'synchronize', 1, 'release'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'm4', check: { conclusion: 'action_required' } });
+  });
+
   it('keeps a flagged hunk flagged on later commits of the PR without asking Jev again', async () => {
     files = [changed];
     answers = { h1: { noul: 0.1 } };
@@ -240,7 +264,7 @@ describe('approval page', () => {
     expect((await app.request('/github/setup', {}, env)).status).toBe(403);
   });
 
-  it('shows the flagged hunks and turns the check green for that commit only', async () => {
+  it('shows the flagged hunks and turns the check green for that commit', async () => {
     files = [changed];
     answers = { h1: { noul: 0.1 } };
     await hook(event('b1'));
@@ -260,6 +284,8 @@ describe('approval page', () => {
     expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'success', title: 'Approved by owner@example.com' });
     expect(asked).toHaveLength(1);
 
+    // A new commit that changes the PR's own diff needs a new decision.
+    files = [changed, { filename: 'src/x.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
     await hook(event('b2'));
     expect(checks.at(-1)).toMatchObject({ sha: 'b2', check: { conclusion: 'action_required' } });
   });
