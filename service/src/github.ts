@@ -18,11 +18,25 @@ export interface GitHub {
 
 export const CONTEXT = 'test-integrity';
 
+/**
+ * Rebuilds a PEM key pasted into a single-line secret field, where its line breaks were dropped, turned into spaces or
+ * written as literal `\n`.
+ */
+export function normalizePem(pem: string): string {
+  const m = pem.match(/-----BEGIN ([A-Z ]+)-----([\s\S]*?)-----END \1-----/);
+  if (!m) return pem;
+  const body = m[2].replace(/\\n|\s/g, '');
+  return `-----BEGIN ${m[1]}-----\n${body.match(/.{1,64}/g)?.join('\n')}\n-----END ${m[1]}-----\n`;
+}
+
 /** GitHub hands out PKCS#1 keys; WebCrypto, which Octokit uses here, takes PKCS#8. */
-const pkcs8 = (pem: string) => (pem.includes('BEGIN RSA PRIVATE KEY') ? createPrivateKey(pem).export({ type: 'pkcs8', format: 'pem' }).toString() : pem);
+const pkcs8 = (pem: string) => {
+  const key = normalizePem(pem);
+  return key.includes('BEGIN RSA PRIVATE KEY') ? createPrivateKey(key).export({ type: 'pkcs8', format: 'pem' }).toString() : key;
+};
 
 export function github(env: Env): GitHub {
-  const app = new App({ appId: env.GITHUB_APP_ID, privateKey: pkcs8(env.GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n')), webhooks: { secret: env.GITHUB_WEBHOOK_SECRET } });
+  const app = new App({ appId: env.GITHUB_APP_ID, privateKey: pkcs8(env.GITHUB_PRIVATE_KEY ?? ''), webhooks: { secret: env.GITHUB_WEBHOOK_SECRET } });
   return {
     verifyWebhook: (body, signature) => app.webhooks.verify(body, signature),
 
