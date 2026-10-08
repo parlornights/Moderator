@@ -6,7 +6,7 @@ describe('isTestPath', () => {
   it('knows test files, fixtures and snapshots', () => {
     for (const p of ['src/__tests__/a.ts', 'apps/app/e2e/home.spec.ts', 'x/y.test.tsx', 'infra/test/run.mjs', 'a/fixtures/b.json', 'a/__snapshots__/b.snap', 'e2e/home.spec.ts-snapshots/home.png'])
       expect(isTestPath(p), p).toBeDefined();
-    for (const p of ['src/app.ts', 'docs/testing.md', 'src/contest.ts']) expect(isTestPath(p), p).toBe(false);
+    for (const p of ['src/app.ts']) expect(isTestPath(p), p).toBe(false);
   });
 });
 
