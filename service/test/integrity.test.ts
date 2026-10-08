@@ -129,8 +129,19 @@ describe('webhook', () => {
     files = [changed];
     answers = { h1: { noul: 0.9 } };
     await hook(event('n1'));
-    const samples = asked[0].state.samples as { sanctioned: boolean }[];
-    expect(samples.filter((x) => x.sanctioned).length).toBe(samples.filter((x) => !x.sanctioned).length);
+    const { changes, newFiles } = asked[0].state.samples as { changes: { sanctioned: boolean }[]; newFiles: { leavesExistingTests: boolean }[] };
+    expect(changes.filter((x) => x.sanctioned).length).toBe(changes.filter((x) => !x.sanctioned).length);
+    expect(newFiles.filter((x) => x.leavesExistingTests).length).toBe(newFiles.filter((x) => !x.leavesExistingTests).length);
+  });
+
+  it('asks about a new config file whether it leaves existing tests running, not whether a ticket sanctions a change', async () => {
+    files = [changed, { filename: 'packages/new-lib/vitest.config.ts', status: 'added', patch: "@@ -0,0 +1 @@\n+export default defineConfig({ test: {} });" }];
+    answers = { h1: { noul: 0.9 }, h2: { noul: 0.9 } };
+    await hook(event('nf1'));
+    const q = asked[0].questions as Record<string, { instructions: string }>;
+    expect(q.h1.instructions).toContain('a change to an existing test');
+    expect(q.h2.instructions).toContain('adds a new file, packages/new-lib/vitest.config.ts');
+    expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'success' });
   });
 
   it('judges every hunk of a large PR, in several Jev requests, untruncated', async () => {

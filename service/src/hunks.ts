@@ -24,9 +24,6 @@ export const TEST_GLOBS = [
   '**/jest.config.*',
   '**/jest.setup.*',
   '**/playwright.config.*',
-  '**/vite.config.*',
-  '**/package.json',
-  '.github/workflows/**',
 ];
 
 /** Test files proper; a new one only adds coverage. A new config, mock or fixture can change what runs, so it is judged. */
