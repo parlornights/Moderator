@@ -14,6 +14,7 @@ export interface GitHub {
   verifyWebhook(body: string, signature: string): Promise<boolean>;
   pullFiles(installationId: number, owner: string, repo: string, pr: number): Promise<ChangedFile[]>;
   setStatus(installationId: number, owner: string, repo: string, sha: string, s: Status): Promise<void>;
+  comment(installationId: number, owner: string, repo: string, pr: number, body: string): Promise<void>;
 }
 
 export const CONTEXT = 'test-integrity';
@@ -62,6 +63,11 @@ export function github(env: Env): GitHub {
         target_url: s.targetUrl,
       });
     },
+
+    async comment(installationId, owner, repo, pr, body) {
+      const octokit = await app.getInstallationOctokit(installationId);
+      await octokit.request('POST /repos/{owner}/{repo}/issues/{issue_number}/comments', { owner, repo, issue_number: pr, body });
+    },
   };
 }
 
@@ -72,7 +78,7 @@ export const appManifest = (publicUrl: string) => ({
   hook_attributes: { url: `${publicUrl}/github/webhook` },
   redirect_url: `${publicUrl}/github/created`,
   public: false,
-  default_permissions: { contents: 'read', pull_requests: 'read', statuses: 'write', metadata: 'read' },
+  default_permissions: { contents: 'read', pull_requests: 'write', statuses: 'write', metadata: 'read' },
   default_events: ['pull_request'],
 });
 

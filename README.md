@@ -5,6 +5,9 @@ privileged actions for them: Jev checks and Linear writes. Every call is recorde
 
 ## Calling it
 
+The full API is described at `/openapi.json` and browsable at `/docs` (Swagger UI; use **Authorize** with a key to try calls).
+
+
 Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the comma-separated `MODERATOR_API_KEYS`.
 
 | Endpoint | Does |
@@ -18,11 +21,17 @@ Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the c
 ## test-integrity
 
 Moderator's own GitHub App sends every `pull_request` (opened, synchronize, reopened, ready for review) to
-`/github/webhook`. The Worker fetches the PR's changed files itself, keeps the hunks that change, remove or rename a
-test that already exists (tests, fixtures, snapshots; see `src/hunks.ts`), reads the Linear issue named in the PR title,
-and asks Jev per hunk whether the ticket sanctions it. It posts a `test-integrity` commit status as the App: green when
-nothing is flagged, red with a link to `/approve/<owner>/<repo>/<sha>`, where the owner sees each flagged hunk and can
-approve that commit. A new push runs the check again.
+`/github/webhook`. The Worker fetches the PR's changed files itself, keeps every hunk that changes, removes or renames
+a test that already exists (tests, fixtures, snapshots; see `src/hunks.ts`), reads the Linear issue named in the PR
+title, and asks Jev, neutrally and per hunk, whether the ticket sanctions it. It posts a `test-integrity` commit status
+as the App:
+
+- green when nothing is flagged;
+- red when Jev flags a hunk, when Jev does not answer, or when GitHub shows no diff for a test file. The App then
+  comments on the PR, mentioning its author, with the flagged hunks and a link to `/approve/<owner>/<repo>/<sha>`.
+
+On that page the owner approves (green for that commit only) or rejects with an optional reason, which the App posts on
+the PR and the status keeps. A new push runs the check again.
 
 The owner pages (`/approve/*`, `/github/setup`, `/github/created`) sit behind Cloudflare Access (application "Moderator
 owner pages"), and the Worker checks the Access token itself. `/github/setup` creates the App from a manifest in one click.

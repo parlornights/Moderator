@@ -12,7 +12,8 @@ const page = (title: string, body: unknown) => html`<!doctype html>
         body { font: 15px/1.5 system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 16px; color: #1d1d1f; background: #fff; }
         pre, textarea { font: 12px/1.45 ui-monospace, monospace; background: #f5f5f7; border-radius: 6px; padding: 10px; overflow-x: auto; width: 100%; box-sizing: border-box; }
         .finding { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 12px 0; }
-        button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 0; background: #0a7d32; color: #fff; cursor: pointer; }
+        button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 0; background: #0a7d32; color: #fff; cursor: pointer; margin-right: 8px; }
+        button.reject { background: #b3261e; }
         .muted { color: #6e6e73; }
         @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } pre, textarea { background: #1c1c1e; color: #eee; } .finding { border-color: #333; } .muted { color: #999; } }
       </style>
@@ -55,7 +56,8 @@ export const approvePage = (row: IntegrityRow, findings: Finding[]) =>
     `test-integrity ${row.repo}#${row.pr}`,
     html`<h1>${row.repo} #${row.pr}</h1>
       <p><a href="https://github.com/${row.repo}/pull/${row.pr}">${row.title}</a></p>
-      <p class="muted">Commit ${row.sha.slice(0, 12)} · ticket ${row.issue ?? 'none named'} · ${row.approved_by ? `approved by ${row.approved_by}` : row.state}</p>
+      <p class="muted">Commit ${row.sha.slice(0, 12)} · ticket ${row.issue ?? 'none named'} · ${row.decided_by ? `${row.state} by ${row.decided_by}` : row.state}</p>
+      ${row.reason ? html`<p>Reason given: ${row.reason}</p>` : ''}
       ${findings.length ? '' : html`<p>Nothing flagged.</p>`}
       ${findings.map(
         (f) => html`<div class="finding">
@@ -64,8 +66,15 @@ export const approvePage = (row: IntegrityRow, findings: Finding[]) =>
           ${f.patch ? html`<pre>${f.patch}</pre>` : ''}
         </div>`,
       )}
-      ${row.approved_by || row.state === 'success'
+      ${row.state === 'approved' || row.state === 'success'
         ? ''
-        : html`<form method="post"><button type="submit">Approve these test changes for this commit</button></form>
-            <p class="muted">A new push runs the check again; this approval holds for ${row.sha.slice(0, 12)} only.</p>`}`,
+        : html`<form method="post">
+            <p><label for="reason">Reason for the agent (optional, posted on the PR when you reject)</label></p>
+            <textarea id="reason" name="reason" rows="3"></textarea>
+            <p>
+              <button type="submit" name="decision" value="approve">Approve</button>
+              <button type="submit" name="decision" value="reject" class="reject">Reject</button>
+            </p>
+            <p class="muted">Either decision holds for ${row.sha.slice(0, 12)} only; a new push is checked again.</p>
+          </form>`}`,
   );
