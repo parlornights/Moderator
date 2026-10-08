@@ -193,7 +193,12 @@ describe('approval page', () => {
     expect(page).toContain('src/__tests__/score.test.ts');
     expect(page).toContain('toBeGreaterThan(0)');
 
-    expect((await decide('b1', 'decision=approve')).status).toBe(303);
+    const res = await decide('b1', 'decision=approve');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/approve/parlornights/CrookedDuke/b1?done=approved');
+    const after = await (await app.request('/approve/parlornights/CrookedDuke/b1?done=approved', {}, env)).text();
+    expect(after).toContain('Approved. The check is green for this commit.');
+    expect(after).not.toContain('name="decision"');
     expect(checks.at(-1)).toMatchObject({ sha: 'b1', check: { conclusion: 'success', title: 'Approved by owner@example.com' } });
 
     await hook(event('b1', 'reopened'));
@@ -225,6 +230,14 @@ describe('approval page', () => {
     expect((await decide('r1', 'decision=reject&reason=Keep+the+exact+total%3B+fix+the+scoring+instead.')).status).toBe(303);
     expect(checks.at(-1)).toMatchObject({ sha: 'r1', check: { conclusion: 'failure', title: 'Rejected by the owner: Keep the exact total; fix the scoring instead.' } });
     expect(comments).toEqual([{ pr: 42, body: expect.stringContaining('> Keep the exact total; fix the scoring instead.') }]);
+    const after = await (await app.request('/approve/parlornights/CrookedDuke/r1?done=rejected', {}, env)).text();
+    expect(after).toContain('Rejected. The check fails for this commit');
+    expect(after).toContain('Keep the exact total; fix the scoring instead.');
+    expect(after).not.toContain('name="decision"');
+
+    // A second click (or a stale tab) does not change a decision already made.
+    await decide('r1', 'decision=approve');
+    expect(checks.at(-1)?.check.conclusion).toBe('failure');
 
     await hook(event('r1', 'reopened'));
     expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'failure', title: expect.stringContaining('Rejected by the owner') });

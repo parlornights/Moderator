@@ -107,7 +107,7 @@ export function createApp(deps: Deps = realDeps) {
   app.get('/approve/:owner/:repo/:sha', owner('test-integrity findings', 'The flagged test hunks of one commit, with an Approve button.'), async (c) => {
     const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
     if (!row) return c.text('No test-integrity run for this commit', 404);
-    return c.html(approvePage(row, JSON.parse(row.findings)));
+    return c.html(approvePage(row, JSON.parse(row.findings), c.req.query('done')));
   });
 
   app.post('/approve/:owner/:repo/:sha', owner('Approve or reject a commit', 'Form fields `decision` (approve | reject) and optional `reason`. Approve: the check turns green for this commit only. Reject: it fails and the App comments the reason on the PR.'), async (c) => {
@@ -117,8 +117,9 @@ export function createApp(deps: Deps = realDeps) {
     const decision = form.decision;
     if (decision !== 'approve' && decision !== 'reject') return c.text('decision must be approve or reject', 400);
     const reason = typeof form.reason === 'string' ? form.reason.slice(0, 2_000) : undefined;
+    if (row.state === 'approved' || row.state === 'rejected') return c.redirect(c.req.path, 303);
     await integrity.decide(c.env, deps.github(c.env), row, { by: c.get('owner'), approve: decision === 'approve', reason });
-    return c.redirect(c.req.path, 303);
+    return c.redirect(`${c.req.path}?done=${decision === 'approve' ? 'approved' : 'rejected'}`, 303);
   });
 
   /**
