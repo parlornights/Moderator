@@ -47,13 +47,19 @@ and writes nothing; the agent then uses the Linear connector, whose write tools 
 
 `MODERATOR_API_KEYS`, `OPENROUTER_API_KEY`, `LINEAR_API_KEY`, and from `/github/setup`: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`. Moderator keys may use only letters, digits and `._~+/-`, with `=` padding at the end (base64 or hex), as the Bearer scheme allows.
 
+## Build and deploy
+
+Workers Builds (Cloudflare dashboard → Workers & Pages → moderator → Settings → Build), connected to this repository:
+root directory `service`, build command `pnpm run check` (lint, types, tests), deploy command `pnpm run deploy`
+(D1 migrations, then deploy), production branch `main`. Every other branch is checked and uploaded as a preview
+version without being deployed.
+
 ## Develop
 
 ```sh
 cd service
 pnpm install
-pnpm test        # vitest in the Workers runtime, real D1
-pnpm typecheck
+pnpm check       # oxlint, tsc and vitest (in the Workers runtime, real D1)
 pnpm deploy      # applies D1 migrations, then deploys
 MODERATOR_KEY=<key> pnpm smoke   # live test of the deployed Worker; files one Linear test issue and cancels it
 ```
