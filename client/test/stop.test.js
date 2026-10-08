@@ -133,6 +133,26 @@ test('without a readable transcript the hook falls back to running.json', async 
   assert.doesNotMatch(r.git('log', '--format=%s'), /checkpoint/);
 });
 
+test('in the middle of a merge it commits and pushes nothing, so no conflict marker leaves the machine', async () => {
+  const { r, stop } = await setup();
+  r.put('a.js', 'base\n');
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'a');
+  r.git('checkout', '-q', '-b', 'other');
+  r.put('a.js', 'theirs\n');
+  r.git('commit', '-qam', 'theirs');
+  r.git('checkout', '-q', 'cd-7-x');
+  r.put('a.js', 'ours\n');
+  r.git('commit', '-qam', 'ours');
+  assert.throws(() => r.git('merge', '-q', 'other'));
+  const head = r.git('rev-parse', 'HEAD');
+  const pushed = r.remoteHead();
+  assert.equal(await stop({ stop_hook_active: true }), null);
+  assert.equal(r.git('rev-parse', 'HEAD'), head);
+  assert.equal(r.remoteHead(), pushed);
+  assert.match(r.git('status', '--porcelain'), /^UU a\.js/m);
+});
+
 test('on main, or a branch without an issue, it does nothing', async () => {
   for (const branch of ['main', 'claude/tidy-up']) {
     const r = repo({ branch, files: { 'a.js': 'x' } });

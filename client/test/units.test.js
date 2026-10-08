@@ -17,7 +17,7 @@ const spawnUnit = (min, toolId, agentId, type = 'unit') => [use(min, toolId, 'Ag
 test('a unit runs from its spawn until a final notice, and again after a message to it that did not fail', () => {
   const lines = [
     ...spawnUnit(0, 't1', 'aaa111'),
-    ...spawnUnit(1, 't2', 'bbb222', 'unit-deep'),
+    ...spawnUnit(1, 't2', 'bbb222', 'moderator:unit-deep'),
     use(2, 't3', 'Agent', { subagent_type: 'Explore', description: 'read' }),
     result(2, 't3', 'ccc333'),
     notice(30, 'aaa111', 'completed'),
@@ -32,7 +32,7 @@ test('a unit runs from its spawn until a final notice, and again after a message
     units.map((u) => [u.id, u.type, u.running]),
     [
       ['aaa111', 'unit', true],
-      ['bbb222', 'unit-deep', false],
+      ['bbb222', 'moderator:unit-deep', false],
     ],
   );
 });

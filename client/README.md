@@ -31,8 +31,8 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
       { "matcher": "Artifact", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "post-artifact"], "timeout": 10 }] },
       { "matcher": "*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "context-watch"], "timeout": 10 }] }
     ],
-    "SubagentStart": [{ "matcher": "unit|unit-deep", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-start"], "timeout": 10 }] }],
-    "SubagentStop": [{ "matcher": "unit|unit-deep", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-stop"], "timeout": 2400 }] }],
+    "SubagentStart": [{ "matcher": "^(moderator:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-start"], "timeout": 10 }] }],
+    "SubagentStop": [{ "matcher": "^(moderator:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-stop"], "timeout": 2400 }] }],
     "PreCompact": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "pre-compact"], "timeout": 30 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "stop"], "timeout": 120 }] }]
   }
@@ -50,8 +50,11 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 | `pre-compact` | Writes and commits the note's auto block before a compaction. |
 | `stop` | Commits a checkpoint, holds the turn once for what is left (units without a check-in, open questions Jev reads as not whole or not repeated, a stale note, the issue not read on Linear, an unlinked artifact, a hand-over due), then pushes the branch. |
 
-A hook never stops a session over its own bug: the error goes to stderr and the hook says nothing. Jev not answering
-never blocks: the check is skipped and the Stop hook says so.
+A hook never stops a session over its own bug or a broken config: it does nothing, and tells the user so in one line,
+since the protocol is off until it is fixed. Jev not answering never blocks: the check is skipped and the Stop hook
+says so. The Stop hook commits and pushes nothing while a merge, cherry-pick or revert is unfinished.
+
+A unit is the `unit` or `unit-deep` agent, or the same from a plugin (`moderator:unit`); the matchers above take both.
 
 The issue is the one the branch name carries (`issuePattern`); a branch without one gets no ledger, and the hooks
 stay quiet there. The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, the gate's results and logs.
@@ -63,8 +66,8 @@ stay quiet there. The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, 
 
 A Linear write goes through the service, which asks Jev whether it is a product-level write. When Jev refuses or
 does not answer, nothing is written and the command exits 3; the agent then uses the Linear connector's own tool,
-whose write tools prompt the owner. The same request always carries the same id, so running a command twice files
-once.
+whose write tools prompt the owner. The same request on the same day carries the same id, so running a command twice
+files once.
 
 ## moderator.config.json
 

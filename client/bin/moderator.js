@@ -154,6 +154,7 @@ const commands = {
       const [id] = positionals;
       if (!id) throw new Error('linear update needs the issue id');
       if (values.link && !values['link-title']) throw new Error('--link needs --link-title');
+      if (values.priority !== undefined && !/^[0-4]$/.test(values.priority)) throw new Error('--priority is 0 (none) to 4 (low)');
       r = await linear.updateIssue(id, {
         title: values.title,
         description: values['description-file'] ? readText(values['description-file']) : undefined,
@@ -203,8 +204,9 @@ const commands = {
     try {
       r = await (await import(`../src/hooks/${name}.js`)).default(i);
     } catch (e) {
-      // A bug in a hook never stops the session: it is logged, and the hook says nothing.
+      // A bug in a hook, or a broken config, never stops the session; the user is told, since the protocol is off.
       process.stderr.write(`moderator hook ${name} failed: ${e instanceof Error ? e.stack : e}\n`);
+      process.stdout.write(JSON.stringify({ systemMessage: `moderator hook ${name} failed: ${e instanceof Error ? e.message : e}` }));
       return 0;
     }
     if (r?.json) process.stdout.write(JSON.stringify(r.json));

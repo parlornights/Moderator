@@ -34,12 +34,14 @@ test('force push is refused, a lease is not; rm -rf at or above the repository i
   assert.match(await bash('git push -f origin cd-1-x'), /force push/);
   assert.match(await bash('GIT_TRACE=1 git push --force origin cd-1-x'), /force push/);
   assert.equal(await bash('git push --force-with-lease origin cd-1-x'), 'allowed');
+  for (const cmd of ['git push origin +main', 'git push origin +HEAD:main', 'git push origin +cd-1-x']) assert.match(await bash(cmd), /force push/, cmd);
   for (const cmd of ['rm -rf .', 'rm -rf /', 'rm -fr ..', 'rm -rf ../x', 'rm -rf']) assert.match(await bash(cmd), /recursive delete/, cmd);
   assert.equal(await bash('rm -rf node_modules'), 'allowed');
 });
 
-test('a unit stays on its branch', async () => {
+test('a unit stays on its branch, the plugin\'s units too', async () => {
   assert.match(await bash('git checkout main', 'unit'), /stay on the task branch/);
+  assert.match(await bash('git checkout main', 'moderator:unit-deep'), /stay on the task branch/);
   assert.equal(await bash('git checkout main'), 'allowed');
 });
 
@@ -64,6 +66,7 @@ test('a unit past the cap is refused a pure wait, never real work; under the cap
   assert.equal(await bash(loop, 'unit'), 'allowed');
   seed('u1', { total: WAIT_CAP_SEC + 1, since: null });
   assert.match(await bash(loop, 'unit'), /BLOCKED: waiting on/);
+  assert.match(await bash(loop, 'moderator:unit'), /BLOCKED: waiting on/);
   assert.equal(await bash('until curl -s localhost:4173; do sleep 1; done; pnpm e2e', 'unit'), 'allowed');
   assert.equal(await bash('pnpm gate', 'unit'), 'allowed');
   assert.equal(await bash(loop), 'allowed');

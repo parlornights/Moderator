@@ -22,7 +22,7 @@ const regex = z.string().min(1).refine((s) => {
 const check = z.strictObject({
   /** files: lintable files changed; packages: a workspace package changed; rule: a rule names it; always. */
   when: z.enum(['files', 'packages', 'rule', 'always']),
-  /** {files}: the changed lintable files, quoted; {filters}: pnpm's `-r`, or `--filter "...<pkg>"` per changed package. */
+  /** {files}: the changed lintable files, quoted; {filters}: pnpm's `-r`, or `--filter '...<pkg>'` per changed package. */
   cmd: z.string().min(1),
   order: z.number().default(50),
   timeoutSec: z.number().positive().default(900),

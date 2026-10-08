@@ -8,16 +8,18 @@ const { requestId } = await import('../src/api.js');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-test('the same Linear request always carries the same UUID, so running it twice files once', () => {
-  const a = requestId({ issue: 'CD-1', body: 'Owner decided: A.' });
+test('the same Linear request on the same day carries the same UUID, so running it twice files once', () => {
+  const day = new Date('2026-10-08T09:00:00Z');
+  const a = requestId({ issue: 'CD-1', body: 'Released to production.' }, day);
   assert.match(a, UUID);
-  assert.equal(requestId({ issue: 'CD-1', body: 'Owner decided: A.' }), a);
-  assert.notEqual(requestId({ issue: 'CD-1', body: 'Owner decided: B.' }), a);
+  assert.equal(requestId({ issue: 'CD-1', body: 'Released to production.' }, new Date('2026-10-08T23:00:00Z')), a);
+  assert.notEqual(requestId({ issue: 'CD-1', body: 'Owner decided: B.' }, day), a);
+  assert.notEqual(requestId({ issue: 'CD-1', body: 'Released to production.' }, new Date('2026-10-12T09:00:00Z')), a, 'the next release says it again');
 });
 
-async function setup(answer, opts) {
+async function setup(answer, opts, prefix = '') {
   const moderator = await fakeModerator(answer, opts);
-  const r = repo({ branch: 'cd-1-x', config: { ...CONFIG, moderatorUrl: moderator.url } });
+  const r = repo({ branch: 'cd-1-x', config: { ...CONFIG, moderatorUrl: `${moderator.url}${prefix}` } });
   return { r, moderator, run: (args, input) => cli(args, { cwd: r.dir, input }) };
 }
 
@@ -45,6 +47,14 @@ test('linear update sends only what changes, with a link and labels', async () =
   assert.equal(moderator.calls[0].route, 'PATCH /tool/linear/issue/CD-1');
   assert.deepEqual(moderator.calls[0].body, { status: 'In Review', priority: 2, addLabels: ['a', 'b'], links: [{ url: 'https://claude.ai/artifact/x', title: 'Board' }] });
   assert.equal((await run(['linear', 'update', 'CD-1', '--link', 'https://x'])).status, 1);
+  assert.match((await run(['linear', 'update', 'CD-1', '--priority', 'high'])).stderr, /--priority is 0 \(none\) to 4 \(low\)/);
+  assert.equal(moderator.calls.length, 1);
+});
+
+test('a moderatorUrl with a path keeps it', async () => {
+  const { moderator, run } = await setup(() => ({ outcome: 'done', id: 'c', url: 'u' }), undefined, '/moderator/');
+  await run(['linear', 'comment', 'CD-1', '--body-file', '-'], 'x');
+  assert.equal(moderator.calls[0].route, 'POST /moderator/tool/linear/comment');
 });
 
 test('a write Jev refuses, or cannot judge, is not written: exit 3 and the connector route to the owner', async () => {
@@ -96,4 +106,5 @@ test('help lists the commands; an unknown command is an error; a hook bug never 
   const out = await hook('session-start', { source: 'startup' }, { cwd: r.dir });
   assert.equal(out.status, 0);
   assert.match(out.stderr, /moderator hook session-start failed: .*moderator\.config\.json/);
+  assert.match(out.json.systemMessage, /^moderator hook session-start failed: moderator\.config\.json: /, 'the user sees it: the protocol is off');
 });

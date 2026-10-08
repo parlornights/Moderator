@@ -64,13 +64,22 @@ test('the plan follows the diff: lint for lintable files, unit per changed packa
   const s = computeScope();
   assert.deepEqual(s.packages, ['@x/ui']);
   assert.deepEqual(s.checks.map((c) => c.id), ['lint', 'unit', 'smoke']);
-  assert.equal(s.checks[0].cmd, 'echo lint "packages/ui/button.js"');
-  assert.equal(s.checks[1].cmd, 'echo unit --filter "...@x/ui"');
+  assert.equal(s.checks[0].cmd, "echo lint 'packages/ui/button.js'");
+  assert.equal(s.checks[1].cmd, "echo unit --filter '...@x/ui'");
   assert.deepEqual(s.skipped.map((k) => k.id), ['balance']);
 
   r.put('packages/game/rules.js', 'x');
   assert.deepEqual(computeScope().checks.map((c) => c.id), ['lint', 'unit', 'balance', 'smoke']);
   assert.deepEqual(computeScope().rules, ['bot balance']);
+});
+
+test('a file name is one shell word in a command, whatever it contains', async () => {
+  const r = repo({ branch: 'cd-6-x', config: { ...CONFIG, checks: { lint: { when: 'files', cmd: 'printf "<%s>" {files}' } } }, files: FILES });
+  r.put("packages/ui/it's $(touch pwned).js", 'x');
+  const run = await cli(['gate'], { cwd: r.dir });
+  assert.equal(run.status, 0, run.stdout);
+  assert.match(r.read('.work/CD-6/gate-lint.log'), /<packages\/ui\/it's \$\(touch pwned\)\.js>/);
+  assert.equal(fs.existsSync(path.join(r.dir, 'pwned')), false);
 });
 
 test('a global file runs every check for every package', () => {

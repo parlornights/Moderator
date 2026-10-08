@@ -11,7 +11,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const UNIT_TYPES = new Set(['unit', 'unit-deep']);
+/**
+ * A unit's agent type: `unit` or `unit-deep`, or the same from a plugin (`moderator:unit`).
+ * @param {unknown} type
+ */
+export const isUnitType = (type) => typeof type === 'string' && /^(?:[\w-]+:)?unit(?:-deep)?$/.test(type);
 export const IDLE_MINUTES = 20;
 export const DEAD_MINUTES = 6 * 60;
 const FINAL = new Set(['completed', 'killed', 'failed', 'stopped']);
@@ -98,7 +102,7 @@ export function readSession(lines) {
     const at = Date.parse(e.timestamp || '') || null;
     const content = e.message?.content;
     for (const b of Array.isArray(content) ? content : []) {
-      if (b.type === 'tool_use' && b.name === 'Agent' && UNIT_TYPES.has(b.input?.subagent_type)) {
+      if (b.type === 'tool_use' && b.name === 'Agent' && isUnitType(b.input?.subagent_type)) {
         spawnById.set(b.id, { type: b.input.subagent_type, description: b.input.description || '', started: at });
       }
       if (b.type === 'tool_use' && b.name === 'SendMessage' && units.has(b.input?.to)) messageById.set(b.id, b.input.to);
@@ -165,7 +169,7 @@ export function unitTodos({ units, checkIns, watched, prs = [] }, now = Date.now
  */
 function sh(cmd, args) {
   try {
-    return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 }).trim();
+    return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).trim();
   } catch {
     return null;
   }
@@ -196,7 +200,7 @@ export function newestTranscript(cwd = process.cwd()) {
  */
 export function inspect(session, transcriptPath, { now = Date.now(), remote = true } = {}) {
   const subagents = path.join(transcriptPath.replace(/\.jsonl$/, ''), 'subagents');
-  const repo = (sh('git', ['remote', 'get-url', 'origin']) || '').match(/github\.com[/:]([^/]+\/[^/.]+)/)?.[1];
+  const repo = (sh('git', ['remote', 'get-url', 'origin']) || '').match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1];
   for (const u of session.units.filter((x) => x.running)) {
     try {
       u.idleMin = Math.floor((now - fs.statSync(path.join(subagents, `agent-${u.id}.jsonl`)).mtimeMs) / 60_000);

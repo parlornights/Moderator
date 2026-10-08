@@ -6,6 +6,9 @@ import path from 'node:path';
 
 import { git, root } from './git.js';
 
+/** The task's own ledger never counts as a change: the hooks commit it on every stop. */
+const NOT_WORK = ['--', '.', ':(exclude).work'];
+
 /**
  * Files changed against base: commits since the merge base, staged and unstaged edits, untracked files. Deleted
  * files are included (a deleted test is a scope fact).
@@ -16,9 +19,9 @@ export function changedFiles(base) {
   const set = new Set();
   /** @param {string | null} out */
   const add = (out) => (out || '').split('\n').filter(Boolean).forEach((f) => set.add(f));
-  if (mergeBase) add(git(['diff', '--name-only', '--diff-filter=ACMRD', mergeBase, 'HEAD']));
-  add(git(['diff', '--name-only', '--diff-filter=ACMRD', 'HEAD']));
-  add(git(['ls-files', '--others', '--exclude-standard']));
+  if (mergeBase) add(git(['diff', '--name-only', '--diff-filter=ACMRD', mergeBase, 'HEAD', ...NOT_WORK]));
+  add(git(['diff', '--name-only', '--diff-filter=ACMRD', 'HEAD', ...NOT_WORK]));
+  add(untracked().join('\n'));
   return { files: [...set].sort(), mergeBase };
 }
 
@@ -29,7 +32,7 @@ export function changedFiles(base) {
  * @returns {{ file: string, added: number, removed: number }[]}
  */
 export function lineCounts(mergeBase) {
-  const numstat = [mergeBase ? git(['diff', '--numstat', mergeBase, 'HEAD']) : null, git(['diff', '--numstat', 'HEAD'])].filter(Boolean).join('\n');
+  const numstat = [mergeBase ? git(['diff', '--numstat', mergeBase, 'HEAD', ...NOT_WORK]) : null, git(['diff', '--numstat', 'HEAD', ...NOT_WORK])].filter(Boolean).join('\n');
   const out = numstat
     .split('\n')
     .filter(Boolean)
@@ -51,7 +54,7 @@ export function lineCounts(mergeBase) {
 
 /** Untracked files outside .work/. */
 function untracked() {
-  return (git(['ls-files', '--others', '--exclude-standard', '--', '.', ':(exclude).work']) || '').split('\n').filter(Boolean);
+  return (git(['ls-files', '--others', '--exclude-standard', ...NOT_WORK]) || '').split('\n').filter(Boolean);
 }
 
 /** @type {Map<string, string | null>} */
@@ -89,7 +92,7 @@ export function packageOf(file) {
 export function treeHash() {
   const h = crypto.createHash('sha1');
   h.update(git(['rev-parse', 'HEAD']) || '');
-  h.update(git(['diff', 'HEAD', '--binary', '--', '.', ':(exclude).work']) || '');
+  h.update(git(['diff', 'HEAD', '--binary', ...NOT_WORK]) || '');
   for (const f of untracked()) h.update(`${f}:${git(['hash-object', '--', f]) || ''}`);
   return h.digest('hex').slice(0, 12);
 }

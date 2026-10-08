@@ -5,9 +5,7 @@ import { spawnSync } from 'node:child_process';
 
 import { config } from '../config.js';
 import { root } from '../git.js';
-
-/** @param {string} s */
-const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+import { quote } from '../shell.js';
 
 /** @param {any} input */
 export default async function postEdit(input) {

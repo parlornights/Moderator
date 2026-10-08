@@ -31,6 +31,11 @@ function stateOnlyAndRecent() {
   return Date.now() / 1000 - pushedAt < 30 * 60;
 }
 
+/** A merge, cherry-pick or revert stopped half way: committing now would commit its conflict markers. */
+function operationInProgress() {
+  return ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'].some((ref) => git(['rev-parse', '-q', '--verify', ref]) !== null) || Boolean(git(['diff', '--name-only', '--diff-filter=U']));
+}
+
 /**
  * What the open-question check asks for: Jev judges whether the note's open questions are whole and the last
  * message repeats them, and whether the message asks the owner for a decision.
@@ -54,6 +59,8 @@ export default async function stop(input) {
   const b = branch();
   const issue = issueId();
   if (isMainBranch(b) || !issue) return;
+  // The agent stopped in the middle of a merge (to ask about a conflict, say): commit and push nothing until it ends.
+  if (operationInProgress()) return;
 
   // Running units, read from the session transcript: each needs an armed check-in and a watched PR, and one that
   // stalled or whose PR merged is named. The second pass skips GitHub. running.json is the fallback.

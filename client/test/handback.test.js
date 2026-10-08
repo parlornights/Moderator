@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { cli, repo } from './helpers.js';
+import { cli, fakeModerator, repo } from './helpers.js';
 
 const { checkHandback, parseHandback } = await import('../src/handback.js');
 const { computeRisk } = await import('../src/risk.js');
@@ -47,6 +47,36 @@ test('done needs a green gate on this very tree', async () => {
   assert.match(green.warnings.join(), /"gate" says abc/);
   r.put('a.js', 'y');
   assert.match(checkHandback(handback()).errors.join(), /the tree changed after the last green gate/);
+});
+
+test("the task's own ledger never counts toward the risk, even with no ignore rule", () => {
+  const r = repo({ branch: 'cd-3-x', config: { issuePattern: '\\bCD-\\d+\\b', lintExtensions: ['.js'], risk: { linesHigh: 50, filesHigh: 3 } } });
+  process.chdir(r.dir);
+  for (const f of ['handoff.md', 'events.jsonl', 'gate.json', 'gate-unit.log']) r.put(`.work/CD-3/${f}`, 'x\n'.repeat(100));
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'wip(CD-3): checkpoint');
+  r.put('.work/CD-3/gate-lint.log', 'y\n'.repeat(100));
+  r.put('a.js', 'x');
+  const risk = computeRisk();
+  assert.deepEqual([risk.level, risk.files, risk.added], ['normal', 1, 1]);
+});
+
+test('Jev may raise the reviewer to opus, never lower it, and reads only paths, counts and commit subjects', async () => {
+  const answers = [];
+  const moderator = await fakeModerator(() => ({ outcome: 'done', result: answers.shift() }));
+  const config = { ...CONFIG, moderatorUrl: moderator.url };
+  const r = repo({ branch: 'cd-4-x', config });
+  r.put('src/a.js', 'x');
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'cap names at 24');
+  answers.push({ opus: true, p: 0.8 });
+  assert.match((await cli(['risk'], { cwd: r.dir })).stdout, /^risk: high \(jev: strong review \(p=0\.8\)\) -> reviewer: opus/);
+  assert.deepEqual(moderator.calls[0].body, { files: ['src/a.js'], numstat: ['1\t0\tsrc/a.js'], commits: ['cap names at 24'] });
+  answers.push({ opus: false, p: 0.1 });
+  assert.match((await cli(['risk'], { cwd: r.dir })).stdout, /^risk: normal -> reviewer: sonnet/);
+  r.put('src/auth/token.js', 'x');
+  answers.push({ opus: false, p: 0.1 });
+  assert.match((await cli(['risk'], { cwd: r.dir })).stdout, /^risk: high \(sensitive path: src\/auth\/token\.js\) -> reviewer: opus/);
 });
 
 test('a sensitive path needs an opus review, new source needs tests, and the issue must be the branch\'s', async () => {

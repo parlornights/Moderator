@@ -9,7 +9,7 @@ import path from 'node:path';
 
 import { config, matcher } from '../config.js';
 import { root } from '../git.js';
-import { isPureWait, waitsFile, WAIT_CAP_SEC } from '../units.js';
+import { isPureWait, isUnitType, waitsFile, WAIT_CAP_SEC } from '../units.js';
 
 import { deny } from './io.js';
 
@@ -18,8 +18,12 @@ import { deny } from './io.js';
  * @param {string} s one shell segment, starting with `git push`
  */
 function pushRefusal(s) {
-  if (/\s(-f|--force)(\s|$)/.test(s) && !/--force-with-lease/.test(s)) return 'force push is not allowed; use --force-with-lease if you must, or rebase';
-  const toMain = s.split(/\s+/).slice(2).filter((w) => !w.startsWith('-')).some((w) => /(^|:)(refs\/heads\/)?(main|master)$/.test(w));
+  const refspecs = s.split(/\s+/).slice(2).filter((w) => !w.startsWith('-'));
+  // A refspec starting with + forces that ref, flag or not.
+  if (((/\s(-f|--force)(\s|$)/.test(s) && !/--force-with-lease/.test(s)) || refspecs.some((w) => w.startsWith('+')))) {
+    return 'force push is not allowed; use --force-with-lease if you must, or rebase';
+  }
+  const toMain = refspecs.some((w) => /(^|:)(refs\/heads\/)?(main|master)$/.test(w));
   return toMain ? 'no agent pushes to main: push a branch and open a pull request' : null;
 }
 
@@ -53,7 +57,7 @@ function capWaits(agentId, cmd) {
 /** @param {any} input */
 export default async function guard(input) {
   const agent = input.agent_type || 'main';
-  const isUnit = agent === 'unit' || agent === 'unit-deep';
+  const isUnit = isUnitType(agent);
   const tool = input.tool_name;
 
   if (tool === 'Bash') {

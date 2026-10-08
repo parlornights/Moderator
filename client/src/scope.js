@@ -6,6 +6,7 @@ import path from 'node:path';
 import { matcher, requireConfig } from './config.js';
 import { changedFiles, packageOf } from './diff.js';
 import { root } from './git.js';
+import { quote } from './shell.js';
 import { issueId } from './work.js';
 
 /**
@@ -37,7 +38,7 @@ export function computeScope({ base } = {}) {
   }
 
   const lintFiles = considered.filter((f) => c.lintExtensions.some((ext) => f.endsWith(ext)) && fs.existsSync(path.join(root(), f)));
-  const filters = global ? '-r' : [...packages].map((p) => `--filter "...${p}"`).join(' ');
+  const filters = global ? '-r' : [...packages].map((p) => `--filter ${quote(`...${p}`)}`).join(' ');
 
   /** @type {PlannedCheck[]} */
   const checks = [];
@@ -53,7 +54,7 @@ export function computeScope({ base } = {}) {
       skipped.push({ id, reason: String(reason) });
       continue;
     }
-    const cmd = def.cmd.replaceAll('{files}', lintFiles.map((f) => `"${f}"`).join(' ')).replaceAll('{filters}', filters);
+    const cmd = def.cmd.replaceAll('{files}', lintFiles.map(quote).join(' ')).replaceAll('{filters}', filters);
     checks.push({ id, cmd, order: def.order });
   }
   checks.sort((a, b) => a.order - b.order);

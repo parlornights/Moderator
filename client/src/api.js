@@ -15,7 +15,7 @@ async function request(method, route, body) {
   const base = config()?.moderatorUrl;
   const key = process.env.MODERATOR_API_KEY;
   if (!base || !key) throw new Error('Moderator is not set up here: moderatorUrl in moderator.config.json and MODERATOR_API_KEY in the environment');
-  const res = await fetch(new URL(route, base), {
+  const res = await fetch(`${base.replace(/\/$/, '')}${route}`, {
     method,
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -45,12 +45,13 @@ export async function jev(check, input) {
 }
 
 /**
- * A UUID derived from the request, so running the same command twice files once (the service returns what the
- * first call made).
+ * A UUID derived from the request and the day, so running the same command twice files once (the service returns
+ * what the first call made), while the same text on another day, such as a second release note, is a new write.
  * @param {unknown} body
+ * @param {Date} [now]
  */
-export function requestId(body) {
-  const h = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+export function requestId(body, now = new Date()) {
+  const h = crypto.createHash('sha256').update(JSON.stringify([body, now.toISOString().slice(0, 10)])).digest('hex');
   const variant = (8 | (parseInt(h[16], 16) & 3)).toString(16);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
