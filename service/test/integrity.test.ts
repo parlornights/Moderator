@@ -63,6 +63,7 @@ beforeEach(() => {
 describe('webhook', () => {
   it('refuses a bad signature and ignores other events', async () => {
     expect((await hook(event('a1'), { signature: 'bad' })).status).toBe(401);
+    expect((await hook(event('a1'), { signature: '' })).status).toBe(401);
     expect(await (await hook(event('a1'), { type: 'push' })).json()).toEqual({ ignored: true });
     expect(await (await hook(event('a1', 'closed'))).json()).toEqual({ ignored: true });
     expect(statuses).toEqual([]);

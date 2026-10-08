@@ -75,7 +75,8 @@ export function createApp(deps: Deps = realDeps) {
 
   app.post('/github/webhook', async (c) => {
     const body = await c.req.text();
-    if (!(await deps.github(c.env).verifyWebhook(body, c.req.header('X-Hub-Signature-256') ?? ''))) return c.json({ error: 'bad signature' }, 401);
+    const signature = c.req.header('X-Hub-Signature-256');
+    if (!signature || !(await deps.github(c.env).verifyWebhook(body, signature))) return c.json({ error: 'bad signature' }, 401);
     const event = JSON.parse(body) as integrity.PullRequestEvent & { action?: string };
     if (c.req.header('X-GitHub-Event') !== 'pull_request' || !PR_ACTIONS.has(event.action ?? '')) return c.json({ ignored: true });
     const run = integrity.check(c.env, { github: deps.github(c.env), linear: deps.linear(c.env), jev: deps.jev(c.env) }, event).catch((e) => console.error('test-integrity failed', e));
