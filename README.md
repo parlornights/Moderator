@@ -13,25 +13,29 @@ Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the c
 | Endpoint | Does |
 |---|---|
 | `POST /tool/jev/:check` | Runs a Jev check: `pick`, `reviewer`, `verdict`, `open-questions`, `needs-decision`, `linear-issue`, `linear-text`, `linear-comment`. Answers `{outcome: "done", result}` or `{outcome: "not_run", reason: "jev_down"}`. |
-| `POST /tool/linear/issue` | `{team, title, description, project?, parent?}`. Jev checks it is a product task with what done looks like. |
+| `POST /tool/linear/issue` | `{id?, team, title, description, project?, parent?}`; `id` is an optional client UUID that makes a retry safe. Jev checks it is a product task with what done looks like. |
 | `PATCH /tool/linear/issue/:id` | `{title?, description?, status?, priority?, addLabels?, removeLabels?, links?}`. Jev checks only changed title or description. |
-| `POST /tool/linear/comment` | `{issue, body}`. Jev checks it is a settled product update. |
+| `POST /tool/linear/comment` | `{id?, issue, body}`. Jev checks it is a settled product update. |
 | `GET /audit?limit=&before=` | The audit log, newest first. |
 
 ## test-integrity
 
 Moderator's own GitHub App sends every `pull_request` (opened, synchronize, reopened, ready for review) to
-`/github/webhook`. The Worker fetches the PR's changed files itself, keeps every hunk that changes, removes or renames
-a test that already exists (tests, fixtures, snapshots; see `src/hunks.ts`), reads the Linear issue named in the PR
-title, and asks Jev, neutrally and per hunk, whether the ticket sanctions it. It posts a `test-integrity` commit status
-as the App:
+`/github/webhook`. The Worker fetches the PR's changed files itself and keeps every hunk that changes, removes or
+renames an existing test, fixture, snapshot, mock, test helper or test config (`src/hunks.ts`). It reads the Linear
+issue named in the PR title as it stood before the work began (the earliest of the PR's creation and its commit dates;
+text changed after that does not count), and asks Jev, neutrally and per hunk, whether that ticket sanctions it.
 
-- green when nothing is flagged;
-- red when Jev flags a hunk, when Jev does not answer, or when GitHub shows no diff for a test file. The App then
-  comments on the PR, mentioning its author, with the flagged hunks and a link to `/approve/<owner>/<repo>/<sha>`.
+It posts a `test-integrity` check run as the App (only the App can write its own check runs; require it by App in the
+branch rules):
 
-On that page the owner approves (green for that commit only) or rejects with an optional reason, which the App posts on
-the PR and the status keeps. A new push runs the check again.
+- success when nothing is flagged;
+- action required when Jev flags a hunk, when Jev does not answer, when GitHub shows no diff for a test file or lists
+  fewer files than the PR changed, or when the check itself errors. The App then comments on the PR, mentioning its
+  author, with the flagged hunks and a link to `/approve/<owner>/<repo>/<sha>`.
+
+On that page the owner approves (success for that commit only) or rejects with an optional reason (failure; the App
+posts the reason on the PR). A new push runs the check again.
 
 The owner pages (`/approve/*`, `/github/setup`, `/github/created`) sit behind Cloudflare Access (application "Moderator
 owner pages"), and the Worker checks the Access token itself. `/github/setup` creates the App from a manifest in one click.

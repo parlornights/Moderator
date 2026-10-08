@@ -4,16 +4,20 @@ import { createPrivateKey } from 'node:crypto';
 import type { Env } from './env';
 import type { ChangedFile } from './hunks';
 
-export interface Status {
-  state: 'success' | 'failure';
-  description: string;
-  targetUrl: string;
+/** A completed `test-integrity` check run. Only the App that creates a check run can write it. */
+export interface Check {
+  conclusion: 'success' | 'failure' | 'action_required';
+  title: string;
+  summary: string;
+  detailsUrl: string;
 }
 
 export interface GitHub {
   verifyWebhook(body: string, signature: string): Promise<boolean>;
   pullFiles(installationId: number, owner: string, repo: string, pr: number): Promise<ChangedFile[]>;
-  setStatus(installationId: number, owner: string, repo: string, sha: string, s: Status): Promise<void>;
+  /** Every author and committer date on the PR's commits. */
+  commitDates(installationId: number, owner: string, repo: string, pr: number): Promise<string[]>;
+  setCheck(installationId: number, owner: string, repo: string, sha: string, check: Check): Promise<void>;
   comment(installationId: number, owner: string, repo: string, pr: number, body: string): Promise<void>;
 }
 
@@ -51,16 +55,27 @@ export function github(env: Env): GitHub {
       }
     },
 
-    async setStatus(installationId, owner, repo, sha, s) {
+    async commitDates(installationId, owner, repo, pr) {
       const octokit = await app.getInstallationOctokit(installationId);
-      await octokit.request('POST /repos/{owner}/{repo}/statuses/{sha}', {
+      const dates: string[] = [];
+      for (let page = 1; ; page++) {
+        const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/commits', { owner, repo, pull_number: pr, per_page: 100, page });
+        for (const c of data) dates.push(...[c.commit.author?.date, c.commit.committer?.date].filter((d): d is string => !!d));
+        if (data.length < 100) return dates;
+      }
+    },
+
+    async setCheck(installationId, owner, repo, sha, check) {
+      const octokit = await app.getInstallationOctokit(installationId);
+      await octokit.request('POST /repos/{owner}/{repo}/check-runs', {
         owner,
         repo,
-        sha,
-        state: s.state,
-        context: CONTEXT,
-        description: s.description.slice(0, 140),
-        target_url: s.targetUrl,
+        name: CONTEXT,
+        head_sha: sha,
+        status: 'completed',
+        conclusion: check.conclusion,
+        details_url: check.detailsUrl,
+        output: { title: check.title.slice(0, 255), summary: check.summary.slice(0, 60_000) },
       });
     },
 
@@ -78,7 +93,7 @@ export const appManifest = (publicUrl: string) => ({
   hook_attributes: { url: `${publicUrl}/github/webhook` },
   redirect_url: `${publicUrl}/github/created`,
   public: false,
-  default_permissions: { contents: 'read', pull_requests: 'write', statuses: 'write', metadata: 'read' },
+  default_permissions: { contents: 'read', pull_requests: 'write', checks: 'write', metadata: 'read' },
   default_events: ['pull_request'],
 });
 

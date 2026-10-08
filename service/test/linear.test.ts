@@ -62,3 +62,51 @@ describe('linear', () => {
     expect(vars(sent, 'commentCreate')).toMatchObject({ input: { issueId: 'uuid-1', body: 'Merged.' } });
   });
 });
+
+describe('ticketBefore', () => {
+  const at = (iso: string) => new Date(iso);
+  const issueData = (over: object = {}) => ({
+    identifier: 'PAR-1',
+    title: 'T',
+    description: 'D',
+    createdAt: '2026-10-01T00:00:00Z',
+    history: { nodes: [], pageInfo: { hasNextPage: false } },
+    comments: { nodes: [] },
+    ...over,
+  });
+
+  it('keeps the text written before the work began and drops what changed after', async () => {
+    fakeLinear({
+      issue: issueData({
+        history: { nodes: [{ createdAt: '2026-10-05T00:00:00Z', updatedDescription: true, toTitle: null }], pageInfo: { hasNextPage: false } },
+        comments: { nodes: [{ body: 'old', createdAt: '2026-10-02T00:00:00Z', editedAt: null }, { body: 'new', createdAt: '2026-10-06T00:00:00Z', editedAt: null }, { body: 'edited', createdAt: '2026-10-02T00:00:00Z', editedAt: '2026-10-06T00:00:00Z' }] },
+      }),
+    });
+    expect(await linear('k').ticketBefore('PAR-1', at('2026-10-04T00:00:00Z'))).toEqual({ id: 'PAR-1', title: 'T', description: undefined, comments: ['old'] });
+  });
+
+  it('is null when nothing predates the work, and counts nothing from a history it cannot read in full', async () => {
+    fakeLinear({ issue: issueData({ createdAt: '2026-10-09T00:00:00Z' }) });
+    expect(await linear('k').ticketBefore('PAR-1', at('2026-10-04T00:00:00Z'))).toBeNull();
+    vi.restoreAllMocks();
+    fakeLinear({ issue: issueData({ history: { nodes: [], pageInfo: { hasNextPage: true } } }) });
+    expect(await linear('k').ticketBefore('PAR-1', at('2026-10-04T00:00:00Z'))).toBeNull();
+  });
+});
+
+describe('idempotent creates', () => {
+  it('passes the client id to Linear, and on a retry returns what the first call made', async () => {
+    const sent = fakeLinear({ teams: nodes({ id: 'team-1', key: 'PAR' }), issueCreate: { success: true, issue: { id: 'uuid-1' } }, issue });
+    await linear('k').createIssue({ id: 'uuid-1', team: 'PAR', title: 'T', description: 'D' });
+    expect(vars(sent, 'issueCreate')).toMatchObject({ input: { id: 'uuid-1' } });
+    vi.restoreAllMocks();
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_u, init) => {
+      const q = JSON.parse(String(init?.body)).query as string;
+      if (/\{\s*teams\b/.test(q)) return Response.json({ data: { teams: nodes({ id: 'team-1', key: 'PAR' }) } });
+      if (/\{\s*issueCreate\b/.test(q)) return Response.json({ errors: [{ message: 'Entity already exists', extensions: { type: 'invalid input' } }] });
+      return Response.json({ data: { issue } });
+    });
+    expect(await linear('k').createIssue({ id: 'uuid-1', team: 'PAR', title: 'T', description: 'D' })).toEqual({ id: 'PAR-1', url: 'https://linear.app/x/PAR-1' });
+  });
+});

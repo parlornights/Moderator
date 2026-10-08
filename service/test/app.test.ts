@@ -7,7 +7,7 @@ import { NotFound, type Linear } from '../src/linear';
 
 let answers: Answers | null;
 let asked: { state: unknown; questions: Record<string, unknown> }[];
-const linear = { getIssue: vi.fn(), createIssue: vi.fn(), updateIssue: vi.fn(), comment: vi.fn() } satisfies Linear;
+const linear = { ticketBefore: vi.fn(), createIssue: vi.fn(), updateIssue: vi.fn(), comment: vi.fn() } satisfies Linear;
 
 const ask: Ask = async (state, questions) => {
   asked.push({ state, questions });
@@ -132,7 +132,7 @@ describe('Linear tools', () => {
     answers = { comment: { noul: 0.7 } };
     const res = await call('/tool/linear/comment', { method: 'POST', json: { issue: 'PAR-1', body: 'Merged in #4.' } });
     expect(await res.json()).toMatchObject({ outcome: 'done', id: 'c1' });
-    expect(linear.comment).toHaveBeenCalledWith('PAR-1', 'Merged in #4.');
+    expect(linear.comment).toHaveBeenCalledWith('PAR-1', 'Merged in #4.', undefined);
   });
 
   it('answers 502 and audits the error when Linear fails', async () => {
