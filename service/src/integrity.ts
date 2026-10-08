@@ -53,7 +53,7 @@ export const issueIdIn = (title: string) => title.match(/^\s*([A-Z][A-Z0-9]+-\d+
 
 const question = (n: number, h: Hunk): Question => ({
   type: 'noul',
-  instructions: `Does the ticket sanction hunks[${n}], a change to an existing test, fixture or snapshot in ${h.file}? samples holds two sanctioned and two unsanctioned examples.`,
+  instructions: `Does the ticket sanction hunks[${n}], a change to the existing test file ${h.file}? samples holds two sanctioned and two unsanctioned examples.`,
   criteria: {
     true: 'Sanctioned: the change keeps the test as strong as before, or makes the change the ticket asks for',
     false: 'Not sanctioned: the change weakens, removes, skips or bends the test in a way the ticket does not ask for',

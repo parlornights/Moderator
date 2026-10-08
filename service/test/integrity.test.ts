@@ -133,6 +133,17 @@ describe('webhook', () => {
     expect(samples.filter((x) => x.sanctioned).length).toBe(samples.filter((x) => !x.sanctioned).length);
   });
 
+  it('never judges a new test file or a file that is not a test', async () => {
+    files = [
+      { filename: 'packages/new-lib/vitest.config.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+export default {};' },
+      { filename: 'src/new.test.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+it()' },
+      { filename: 'test/setup.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' },
+    ];
+    await hook(event('nf1'));
+    expect(asked).toEqual([]);
+    expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'success', title: 'No existing test changed' });
+  });
+
   it('judges every hunk of a large PR, in several Jev requests, untruncated', async () => {
     const long = `@@ -1 +1 @@\n-${'a'.repeat(5_000)}\n+${'b'.repeat(5_000)}`;
     files = Array.from({ length: 45 }, (_, n) => ({ filename: `src/__tests__/t${n}.test.ts`, status: 'modified', patch: long }));
@@ -156,7 +167,7 @@ describe('webhook', () => {
     await hook(event('a5'));
     expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required', title: "Jev did not answer: the owner's decision is needed" });
 
-    files = [{ filename: 'e2e/home.spec.ts-snapshots/home.png', status: 'modified' }];
+    files = [{ filename: 'src/big.test.ts', status: 'modified' }];
     await hook(event('a6'));
     expect(asked).toHaveLength(1);
     expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required' });
