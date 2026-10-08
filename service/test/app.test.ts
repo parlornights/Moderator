@@ -190,3 +190,19 @@ describe('GET /audit', () => {
     expect(older[0].action).toBe('jev/reviewer');
   });
 });
+
+describe('API docs', () => {
+  it('serves the OpenAPI spec with every endpoint and each Jev check body, without a key', async () => {
+    const spec = (await (await app.request('/openapi.json', {}, env)).json()) as { paths: Record<string, Record<string, any>> };
+    expect(Object.keys(spec.paths)).toEqual(
+      expect.arrayContaining(['/tool/jev/{check}', '/tool/linear/issue', '/tool/linear/issue/{id}', '/tool/linear/comment', '/audit', '/github/webhook', '/approve/{owner}/{repo}/{sha}']),
+    );
+    const jev = spec.paths['/tool/jev/{check}'].post;
+    expect(jev.requestBody.content['application/json'].schema.oneOf.map((s: { title: string }) => s.title)).toContain('pick');
+    expect(spec.paths['/tool/linear/issue'].post.requestBody.content['application/json'].schema.required).toContain('team');
+  });
+
+  it('serves Swagger UI', async () => {
+    expect(await (await app.request('/docs', {}, env)).text()).toContain('swagger');
+  });
+});

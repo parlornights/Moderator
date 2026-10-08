@@ -5,6 +5,9 @@ privileged actions for them: Jev checks and Linear writes. Every call is recorde
 
 ## Calling it
 
+The full API is described at `/openapi.json` and browsable at `/docs` (Swagger UI; use **Authorize** with a key to try calls).
+
+
 Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the comma-separated `MODERATOR_API_KEYS`.
 
 | Endpoint | Does |

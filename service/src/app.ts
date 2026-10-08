@@ -1,10 +1,12 @@
-import { zValidator } from '@hono/zod-validator';
+import { swaggerUI } from '@hono/swagger-ui';
 import { Hono } from 'hono';
+import { describeRoute, openAPIRouteHandler, validator } from 'hono-openapi';
 import { bearerAuth } from 'hono/bearer-auth';
 import { csrf } from 'hono/csrf';
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import { timingSafeEqual } from 'hono/utils/buffer';
+import type { OpenAPIV3_1 } from 'openapi-types';
 import { z } from 'zod';
 
 import { accessEmail, type Verify } from './access';
@@ -47,7 +49,13 @@ const patchBody = z.object({
 const commentBody = z.object({ issue: z.string().min(1), body: z.string().min(1) });
 
 const valid = <T extends z.ZodType>(target: 'json' | 'query', schema: T) =>
-  zValidator(target, schema, (r, c) => (r.success ? undefined : c.json({ error: z.prettifyError(r.error) }, 400)));
+  validator(target, schema, (r, c) => (r.success ? undefined : c.json({ error: z.prettifyError(new z.ZodError(r.error as z.core.$ZodIssue[])) }, 400)));
+
+const tool = (summary: string, description: string) => describeRoute({ tags: ['tools'], summary, description, security: [{ bearer: [] }] });
+const owner = (summary: string, description: string) => describeRoute({ tags: ['owner pages (Cloudflare Access)'], summary, description, security: [] });
+
+const LINEAR_OUTCOME =
+  'Answers `{outcome: "done", id, url}`, or `{outcome: "ask_owner", reason: "jev_refused" | "jev_down", jev?}` and writes nothing. 404 when a team, project, status or label does not exist; 502 when Linear fails.';
 
 export function createApp(deps: Deps = realDeps) {
   const app = new Hono<{ Bindings: Env; Variables: { owner: string } }>();
@@ -73,7 +81,7 @@ export function createApp(deps: Deps = realDeps) {
   app.use('/github/setup', ownerOnly);
   app.use('/github/created', ownerOnly);
 
-  app.post('/github/webhook', async (c) => {
+  app.post('/github/webhook', describeRoute({ tags: ['GitHub'], summary: 'GitHub App webhook', description: 'pull_request events (opened, synchronize, reopened, ready_for_review) run test-integrity. Signed by GitHub with GITHUB_WEBHOOK_SECRET.', security: [] }), async (c) => {
     const body = await c.req.text();
     const signature = c.req.header('X-Hub-Signature-256');
     if (!signature || !(await deps.github(c.env).verifyWebhook(body, signature))) return c.json({ error: 'bad signature' }, 401);
@@ -84,21 +92,21 @@ export function createApp(deps: Deps = realDeps) {
     return c.json({ queued: true }, 202);
   });
 
-  app.get('/github/setup', (c) => c.html(setupPage(c.env.GITHUB_ORG, appManifest(c.env.PUBLIC_URL))));
+  app.get('/github/setup', owner('Create the GitHub App', 'A one-click manifest form that creates Moderator\'s GitHub App.'), (c) => c.html(setupPage(c.env.GITHUB_ORG, appManifest(c.env.PUBLIC_URL))));
 
-  app.get('/github/created', async (c) => {
+  app.get('/github/created', owner('GitHub App created', 'GitHub redirects here after creating the App; shows its secrets once.'), async (c) => {
     const code = c.req.query('code');
     if (!code) return c.text('Missing code', 400);
     return c.html(createdPage(await deps.convertManifest(code)));
   });
 
-  app.get('/approve/:owner/:repo/:sha', async (c) => {
+  app.get('/approve/:owner/:repo/:sha', owner('test-integrity findings', 'The flagged test hunks of one commit, with an Approve button.'), async (c) => {
     const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
     if (!row) return c.text('No test-integrity run for this commit', 404);
     return c.html(approvePage(row, JSON.parse(row.findings)));
   });
 
-  app.post('/approve/:owner/:repo/:sha', async (c) => {
+  app.post('/approve/:owner/:repo/:sha', owner('Approve a commit', 'Posts a green test-integrity status for this commit only.'), async (c) => {
     const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
     if (!row) return c.text('No test-integrity run for this commit', 404);
     await integrity.approve(c.env, deps.github(c.env), row, c.get('owner'));
@@ -131,7 +139,21 @@ export function createApp(deps: Deps = realDeps) {
     return response;
   }
 
-  app.post('/tool/jev/:check', async (c) => {
+  app.post(
+    '/tool/jev/:check',
+    describeRoute({
+      tags: ['tools'],
+      summary: 'Run a Jev check',
+      description: 'Answers `{outcome: "done", result}` or `{outcome: "not_run", reason: "jev_down"}`. The body depends on the check; each schema below is titled with its check name.',
+      security: [{ bearer: [] }],
+      parameters: [{ name: 'check', in: 'path', required: true, schema: { type: 'string', enum: Object.keys(checks) } }],
+      requestBody: {
+        required: true,
+        // zod's JSON Schema is OpenAPI 3.1 schema; only its TypeScript types differ.
+        content: { 'application/json': { schema: { oneOf: Object.entries(checks).map(([name, c]) => ({ title: name, ...z.toJSONSchema(c.input, { io: 'input' }) }) as OpenAPIV3_1.SchemaObject) } } },
+      },
+    }),
+    async (c) => {
     const name = c.req.param('check');
     if (!Object.hasOwn(checks, name)) return c.json({ error: `unknown check ${name}` }, 404);
     const input = await c.req.json().catch(() => undefined);
@@ -141,14 +163,15 @@ export function createApp(deps: Deps = realDeps) {
     const response = result ? { outcome: 'done', result } : { outcome: 'not_run', reason: 'jev_down' };
     await audit.record(c.env.DB, { action: `jev/${name}`, input, jev: result, outcome: response.outcome, response });
     return c.json(response);
-  });
+    },
+  );
 
-  app.post('/tool/linear/issue', valid('json', issueBody), async (c) => {
+  app.post('/tool/linear/issue', tool('File a Linear issue', `Jev checks it is a product task with what done looks like. ${LINEAR_OUTCOME}`), valid('json', issueBody), async (c) => {
     const i = c.req.valid('json');
     return c.json(await gatedWrite(c.env, 'linear/issue', i, { check: 'linear-issue', text: { title: i.title, description: i.description } }, () => deps.linear(c.env).createIssue(i)));
   });
 
-  app.patch('/tool/linear/issue/:id', valid('json', patchBody), async (c) => {
+  app.patch('/tool/linear/issue/:id', tool('Update a Linear issue', `Jev checks only a changed title or description; status, priority, labels and links need no Jev. ${LINEAR_OUTCOME}`), valid('json', patchBody), async (c) => {
     const p = c.req.valid('json');
     const id = c.req.param('id');
     const changed = p.title !== undefined || p.description !== undefined;
@@ -156,15 +179,27 @@ export function createApp(deps: Deps = realDeps) {
     return c.json(await gatedWrite(c.env, 'linear/issue.update', { id, ...p }, gate, () => deps.linear(c.env).updateIssue(id, p)));
   });
 
-  app.post('/tool/linear/comment', valid('json', commentBody), async (c) => {
+  app.post('/tool/linear/comment', tool('Comment on a Linear issue', `Jev checks it is a settled product update. ${LINEAR_OUTCOME}`), valid('json', commentBody), async (c) => {
     const i = c.req.valid('json');
     return c.json(await gatedWrite(c.env, 'linear/comment', i, { check: 'linear-comment', text: { body: i.body } }, () => deps.linear(c.env).comment(i.issue, i.body)));
   });
 
-  app.get('/audit', valid('query', z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), before: z.coerce.number().int().optional() })), async (c) => {
+  app.get('/audit', tool('The audit log', 'Every tool call, webhook run and approval, newest first. Page back with `before=<id>`.'), valid('query', z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), before: z.coerce.number().int().optional() })), async (c) => {
     const q = c.req.valid('query');
     return c.json(await audit.list(c.env.DB, q.limit, q.before));
   });
+
+  app.get(
+    '/openapi.json',
+    openAPIRouteHandler(app, {
+      documentation: {
+        info: { title: 'Moderator', version: '1.0.0', description: 'Jev checks, Linear writes behind Jev, the audit log, and the test-integrity GitHub check.' },
+        components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer', description: 'One of MODERATOR_API_KEYS' } } },
+      },
+      exclude: ['/openapi.json', '/docs'],
+    }),
+  );
+  app.get('/docs', swaggerUI({ url: '/openapi.json' }));
 
   app.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();

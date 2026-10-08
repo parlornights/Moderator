@@ -10,10 +10,11 @@
     "smoke": "vitest run --config smoke/vitest.config.ts"
   },
   "dependencies": {
-    "@hono/zod-validator": "^0.9.1",
+    "@hono/swagger-ui": "^0.6.1",
     "@linear/sdk": "^97.1.0",
     "@octokit/app": "^16.1.4",
     "hono": "^4.13.13",
+    "hono-openapi": "^1.3.5",
     "jose": "^6.2.12",
     "picomatch": "^4.0.7",
     "zod": "^4.6.5"
@@ -23,6 +24,7 @@
     "@cloudflare/workers-types": "^5.20261008.1",
     "@types/node": "^26.6.4",
     "@types/picomatch": "^4.0.3",
+    "openapi-types": "^12.1.3",
     "oxlint": "^1.87.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
