@@ -1,21 +1,38 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { bearerAuth } from 'hono/bearer-auth';
+import { csrf } from 'hono/csrf';
+import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import { timingSafeEqual } from 'hono/utils/buffer';
 import { z } from 'zod';
 
+import { accessEmail, type Verify } from './access';
 import * as audit from './audit';
 import type { Env } from './env';
+import { appManifest, convertManifest, github, type GitHub } from './github';
+import * as integrity from './integrity';
 import { askJev, checks, runCheck, type Ask, type CheckName } from './jev';
 import { linear, NotFound, type Linear } from './linear';
+import { approvePage, createdPage, setupPage } from './pages';
 
 export interface Deps {
   jev(env: Env): Ask;
   linear(env: Env): Linear;
+  github(env: Env): GitHub;
+  access(env: Env): Verify;
+  convertManifest(code: string): ReturnType<typeof convertManifest>;
 }
 
-export const realDeps: Deps = { jev: (env) => askJev(env.OPENROUTER_API_KEY), linear: (env) => linear(env.LINEAR_API_KEY) };
+export const realDeps: Deps = {
+  jev: (env) => askJev(env.OPENROUTER_API_KEY),
+  linear: (env) => linear(env.LINEAR_API_KEY),
+  github,
+  access: accessEmail,
+  convertManifest: (code) => convertManifest(code),
+};
+
+const PR_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']);
 
 const issueBody = z.object({ team: z.string().min(1), title: z.string().min(1), description: z.string(), project: z.string().optional(), parent: z.string().optional() });
 const patchBody = z.object({
@@ -33,18 +50,59 @@ const valid = <T extends z.ZodType>(target: 'json' | 'query', schema: T) =>
   zValidator(target, schema, (r, c) => (r.success ? undefined : c.json({ error: z.prettifyError(r.error) }, 400)));
 
 export function createApp(deps: Deps = realDeps) {
-  const app = new Hono<{ Bindings: Env }>();
+  const app = new Hono<{ Bindings: Env; Variables: { owner: string } }>();
 
-  app.use(
-    '*',
-    bearerAuth({
+  const apiKey = bearerAuth({
       verifyToken: async (token, c) => {
         const keys = ((c.env as Env).MODERATOR_API_KEYS ?? '').split(',').map((k) => k.trim()).filter(Boolean);
         const matches = await Promise.all(keys.map((k) => timingSafeEqual(k, token)));
         return matches.includes(true);
       },
-    }),
-  );
+  });
+  app.use('/tool/*', apiKey);
+  app.use('/audit', apiKey);
+
+  /** Pages for the owner only: Cloudflare Access stands in front of them, and its token is checked here too. */
+  const ownerOnly = createMiddleware<{ Bindings: Env; Variables: { owner: string } }>(async (c, next) => {
+    const email = await deps.access(c.env)(c.req.raw);
+    if (!email) return c.text('Forbidden: sign in through Cloudflare Access', 403);
+    c.set('owner', email);
+    await next();
+  });
+  app.use('/approve/*', ownerOnly, csrf());
+  app.use('/github/setup', ownerOnly);
+  app.use('/github/created', ownerOnly);
+
+  app.post('/github/webhook', async (c) => {
+    const body = await c.req.text();
+    if (!(await deps.github(c.env).verifyWebhook(body, c.req.header('X-Hub-Signature-256') ?? ''))) return c.json({ error: 'bad signature' }, 401);
+    const event = JSON.parse(body) as integrity.PullRequestEvent & { action?: string };
+    if (c.req.header('X-GitHub-Event') !== 'pull_request' || !PR_ACTIONS.has(event.action ?? '')) return c.json({ ignored: true });
+    const run = integrity.check(c.env, { github: deps.github(c.env), linear: deps.linear(c.env), jev: deps.jev(c.env) }, event).catch((e) => console.error('test-integrity failed', e));
+    c.executionCtx.waitUntil(run);
+    return c.json({ queued: true }, 202);
+  });
+
+  app.get('/github/setup', (c) => c.html(setupPage(c.env.GITHUB_ORG, appManifest(c.env.PUBLIC_URL))));
+
+  app.get('/github/created', async (c) => {
+    const code = c.req.query('code');
+    if (!code) return c.text('Missing code', 400);
+    return c.html(createdPage(await deps.convertManifest(code)));
+  });
+
+  app.get('/approve/:owner/:repo/:sha', async (c) => {
+    const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
+    if (!row) return c.text('No test-integrity run for this commit', 404);
+    return c.html(approvePage(row, JSON.parse(row.findings)));
+  });
+
+  app.post('/approve/:owner/:repo/:sha', async (c) => {
+    const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
+    if (!row) return c.text('No test-integrity run for this commit', 404);
+    await integrity.approve(c.env, deps.github(c.env), row, c.get('owner'));
+    return c.redirect(c.req.path, 303);
+  });
 
   /**
    * A Linear write behind a Jev check. Jev passes: the write is done. Jev refuses or does not answer: nothing is

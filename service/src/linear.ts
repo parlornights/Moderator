@@ -23,7 +23,14 @@ export interface Ref {
   url: string;
 }
 
+export interface Issue {
+  id: string;
+  title: string;
+  description: string;
+}
+
 export interface Linear {
+  getIssue(id: string): Promise<Issue | null>;
   createIssue(i: IssueInput): Promise<Ref>;
   updateIssue(id: string, p: IssuePatch): Promise<Ref>;
   comment(issue: string, body: string): Promise<Ref>;
@@ -50,6 +57,16 @@ export function linear(apiKey: string): Linear {
   };
 
   return {
+    async getIssue(id) {
+      try {
+        const issue = await c.issue(id);
+        return { id: issue.identifier, title: issue.title, description: issue.description ?? '' };
+      } catch (e) {
+        if (e instanceof Error && /not found/i.test(e.message)) return null;
+        throw e;
+      }
+    },
+
     async createIssue(i) {
       const team = one((await c.teams({ filter: { key: { eqIgnoreCase: i.team } } })).nodes, `team ${i.team}`);
       const projectId = i.project

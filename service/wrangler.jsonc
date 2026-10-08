@@ -3,8 +3,15 @@
   "name": "moderator",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
   "routes": [{ "pattern": "moderator.parlornights.com", "custom_domain": true }],
   "workers_dev": false,
   "d1_databases": [{ "binding": "DB", "database_name": "moderator", "database_id": "1b31552f-0e51-4fa1-92c0-dab14752b4ce", "migrations_dir": "migrations" }],
+  "vars": {
+    "PUBLIC_URL": "https://moderator.parlornights.com",
+    "GITHUB_ORG": "parlornights",
+    "ACCESS_TEAM_DOMAIN": "white-block-c25b.cloudflareaccess.com",
+    "ACCESS_AUD": "2edc6d40922878f99585506083fc9b0bbd33582436b95c6a7b6aaca6bb968183"
+  },
   "observability": { "enabled": true }
 }

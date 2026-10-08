@@ -7,13 +7,16 @@ import { NotFound, type Linear } from '../src/linear';
 
 let answers: Answers | null;
 let asked: { state: unknown; questions: Record<string, unknown> }[];
-const linear = { createIssue: vi.fn(), updateIssue: vi.fn(), comment: vi.fn() } satisfies Linear;
+const linear = { getIssue: vi.fn(), createIssue: vi.fn(), updateIssue: vi.fn(), comment: vi.fn() } satisfies Linear;
 
 const ask: Ask = async (state, questions) => {
   asked.push({ state, questions });
   return answers;
 };
-const app = createApp({ jev: () => ask, linear: () => linear });
+const unused = () => {
+  throw new Error('not used here');
+};
+const app = createApp({ jev: () => ask, linear: () => linear, github: unused, access: () => async () => null, convertManifest: unused });
 
 const call = (path: string, init: RequestInit & { json?: unknown } = {}, key = 'key-one') =>
   app.request(

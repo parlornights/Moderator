@@ -15,12 +15,24 @@ Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the c
 | `POST /tool/linear/comment` | `{issue, body}`. Jev checks it is a settled product update. |
 | `GET /audit?limit=&before=` | The audit log, newest first. |
 
+## test-integrity
+
+Moderator's own GitHub App sends every `pull_request` (opened, synchronize, reopened, ready for review) to
+`/github/webhook`. The Worker fetches the PR's changed files itself, keeps the hunks that change, remove or rename a
+test that already exists (tests, fixtures, snapshots; see `src/hunks.ts`), reads the Linear issue named in the PR title,
+and asks Jev per hunk whether the ticket sanctions it. It posts a `test-integrity` commit status as the App: green when
+nothing is flagged, red with a link to `/approve/<owner>/<repo>/<sha>`, where the owner sees each flagged hunk and can
+approve that commit. A new push runs the check again.
+
+The owner pages (`/approve/*`, `/github/setup`, `/github/created`) sit behind Cloudflare Access (application "Moderator
+owner pages"), and the Worker checks the Access token itself. `/github/setup` creates the App from a manifest in one click.
+
 A Linear write answers `{outcome: "done", id, url}`, or `{outcome: "ask_owner", reason: "jev_refused" \| "jev_down"}`
 and writes nothing; the agent then uses the Linear connector, whose write tools prompt the owner.
 
 ## Secrets (Worker settings)
 
-`MODERATOR_API_KEYS`, `OPENROUTER_API_KEY`, `LINEAR_API_KEY`. Moderator keys may use only letters, digits and `._~+/-`, with `=` padding at the end (base64 or hex), as the Bearer scheme allows.
+`MODERATOR_API_KEYS`, `OPENROUTER_API_KEY`, `LINEAR_API_KEY`, and from `/github/setup`: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`. Moderator keys may use only letters, digits and `._~+/-`, with `=` padding at the end (base64 or hex), as the Bearer scheme allows.
 
 ## Develop
 
