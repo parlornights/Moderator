@@ -112,8 +112,9 @@ export const LINEAR_SAMPLES = {
     bad: ['Title: Fix the stop hook regex\nDescription: The harness stop hook misses the Decisions heading.', 'Title: Look into performance\nDescription: Things feel slow.'],
   },
   text: {
-    question: 'Is this issue text product-level (what is wanted and what done looks like), not progress, logs or tooling detail?',
-    good: ['From the game list a player renames a saved game. Done when the new name shows in the list and survives a reload.'],
+    question:
+      'Is this new issue text product-level: a title that names what is wanted, or a description that says what is wanted and what done looks like; not progress, logs or tooling detail?',
+    good: ['Players can rename a saved game', 'From the game list a player renames a saved game. Done when the new name shows in the list and survives a reload.'],
     bad: ['Gate GREEN at tree 3f2a, oxlint passed, PR #41 open.', 'Working on it, half the tests pass.'],
   },
   comment: {

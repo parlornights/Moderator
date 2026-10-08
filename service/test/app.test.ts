@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../src/app';
 import type { Answers, Ask } from '../src/jev';
-import type { Linear } from '../src/linear';
+import { NotFound, type Linear } from '../src/linear';
 
 let answers: Answers | null;
 let asked: { state: unknown; questions: Record<string, unknown> }[];
@@ -90,6 +90,7 @@ describe('POST /tool/jev/:check', () => {
 
   it('refuses an unknown check and a bad input', async () => {
     expect((await call('/tool/jev/nope', { method: 'POST', json: {} })).status).toBe(404);
+    expect((await call('/tool/jev/toString', { method: 'POST', json: {} })).status).toBe(404);
     expect((await call('/tool/jev/pick', { method: 'POST', json: { brief: '' } })).status).toBe(400);
     expect(asked).toHaveLength(0);
   });
@@ -139,8 +140,37 @@ describe('Linear tools', () => {
     expect((await auditRows())[0]).toMatchObject({ action: 'linear/comment', outcome: 'error' });
   });
 
+  it('judges a title-only change and refuses an empty description', async () => {
+    answers = { text: { noul: 0.8 } };
+    expect(await (await call('/tool/linear/issue/PAR-1', { method: 'PATCH', json: { title: 'Players rename games' } })).json()).toMatchObject({ outcome: 'done' });
+    expect(asked[0].state).toMatchObject({ text: 'Players rename games' });
+    expect((await call('/tool/linear/issue/PAR-1', { method: 'PATCH', json: { description: '' } })).status).toBe(400);
+    expect(linear.updateIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers done when the write succeeded but the audit insert failed', async () => {
+    answers = { comment: { noul: 0.7 } };
+    await env.DB.exec('ALTER TABLE audit RENAME TO audit_away');
+    try {
+      const res = await call('/tool/linear/comment', { method: 'POST', json: { issue: 'PAR-1', body: 'Merged.' } });
+      expect(await res.json()).toMatchObject({ outcome: 'done' });
+    } finally {
+      await env.DB.exec('ALTER TABLE audit_away RENAME TO audit');
+    }
+  });
+
+  it('answers 404 when Linear has no such team, status or label', async () => {
+    answers = { issue: { noul: 0.9 } };
+    linear.createIssue.mockRejectedValue(new NotFound('team XX not found'));
+    const res = await call('/tool/linear/issue', { method: 'POST', json: { ...issue, team: 'XX' } });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'team XX not found' });
+  });
+
   it('validates the body', async () => {
-    expect((await call('/tool/linear/issue', { method: 'POST', json: { title: 'x' } })).status).toBe(400);
+    const bad = await call('/tool/linear/issue', { method: 'POST', json: { title: 'x' } });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: expect.stringContaining('team') });
     expect((await call('/tool/linear/issue/PAR-1', { method: 'PATCH', json: { priority: 9 } })).status).toBe(400);
   });
 });

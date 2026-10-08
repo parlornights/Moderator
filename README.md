@@ -20,7 +20,7 @@ and writes nothing; the agent then uses the Linear connector, whose write tools 
 
 ## Secrets (Worker settings)
 
-`MODERATOR_API_KEYS`, `OPENROUTER_API_KEY`, `LINEAR_API_KEY`.
+`MODERATOR_API_KEYS`, `OPENROUTER_API_KEY`, `LINEAR_API_KEY`. Moderator keys may use only letters, digits and `._~+/-`, with `=` padding at the end (base64 or hex), as the Bearer scheme allows.
 
 ## Develop
 
