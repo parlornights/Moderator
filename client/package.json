@@ -4,8 +4,18 @@
   "private": true,
   "description": "Moderator's client: the session hooks, the local gate, the handoff note and the CLI that calls the Moderator service.",
   "type": "module",
-  "bin": { "moderator": "bin/moderator.js" },
-  "engines": { "node": ">=22" },
+  "bin": {
+    "moderator": "bin/moderator.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "role.md",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "check": "oxlint bin src test && tsc && node --test",
     "test": "node --test"
