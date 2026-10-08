@@ -129,19 +129,19 @@ describe('webhook', () => {
     files = [changed];
     answers = { h1: { noul: 0.9 } };
     await hook(event('n1'));
-    const { changes, newFiles } = asked[0].state.samples as { changes: { sanctioned: boolean }[]; newFiles: { leavesExistingTests: boolean }[] };
-    expect(changes.filter((x) => x.sanctioned).length).toBe(changes.filter((x) => !x.sanctioned).length);
-    expect(newFiles.filter((x) => x.leavesExistingTests).length).toBe(newFiles.filter((x) => !x.leavesExistingTests).length);
+    const samples = asked[0].state.samples as { sanctioned: boolean }[];
+    expect(samples.filter((x) => x.sanctioned).length).toBe(samples.filter((x) => !x.sanctioned).length);
   });
 
-  it('asks about a new config file whether it leaves existing tests running, not whether a ticket sanctions a change', async () => {
-    files = [changed, { filename: 'packages/new-lib/vitest.config.ts', status: 'added', patch: "@@ -0,0 +1 @@\n+export default defineConfig({ test: {} });" }];
-    answers = { h1: { noul: 0.9 }, h2: { noul: 0.9 } };
+  it('never judges a new test file or a file that is not a test', async () => {
+    files = [
+      { filename: 'packages/new-lib/vitest.config.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+export default {};' },
+      { filename: 'src/new.test.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+it()' },
+      { filename: 'test/setup.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' },
+    ];
     await hook(event('nf1'));
-    const q = asked[0].questions as Record<string, { instructions: string }>;
-    expect(q.h1.instructions).toContain('a change to an existing test');
-    expect(q.h2.instructions).toContain('adds a new file, packages/new-lib/vitest.config.ts');
-    expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'success' });
+    expect(asked).toEqual([]);
+    expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'success', title: 'No existing test changed' });
   });
 
   it('judges every hunk of a large PR, in several Jev requests, untruncated', async () => {
@@ -167,7 +167,7 @@ describe('webhook', () => {
     await hook(event('a5'));
     expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required', title: "Jev did not answer: the owner's decision is needed" });
 
-    files = [{ filename: 'e2e/home.spec.ts-snapshots/home.png', status: 'modified' }];
+    files = [{ filename: 'src/big.test.ts', status: 'modified' }];
     await hook(event('a6'));
     expect(asked).toHaveLength(1);
     expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required' });

@@ -22,7 +22,8 @@ Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the c
 
 Moderator's own GitHub App sends every `pull_request` (opened, synchronize, reopened, ready for review) to
 `/github/webhook`. The Worker fetches the PR's changed files itself and keeps every hunk that changes, removes or
-renames an existing test, fixture, snapshot, mock, test helper or test config (`src/hunks.ts`). It reads the Linear
+renames an existing test file. Test files are known by name: a `.test.`, `.spec.` or `.e2e.` infix (`src/hunks.ts`).
+A new test file only adds coverage and is not judged. It reads the Linear
 issue named in the PR title as it stood before the work began (the earliest of the PR's creation and its commit dates;
 text changed after that does not count), and asks Jev, neutrally and per hunk, whether that ticket sanctions it.
 

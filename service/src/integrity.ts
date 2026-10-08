@@ -32,8 +32,8 @@ export interface PullRequestEvent {
   };
 }
 
-/** Changes to files that already exist; two of each, so the samples do not lean either way. */
-const CHANGE_SAMPLES = [
+/** Two of each, so the samples do not lean either way. */
+const SAMPLES = [
   {
     ticket: 'Names may be 32 characters (was 24). Done when 32 is accepted and 33 refused.',
     hunk: "-  expect(valid('x'.repeat(25))).toBe(false);\n+  expect(valid('x'.repeat(33))).toBe(false);",
@@ -48,37 +48,17 @@ const CHANGE_SAMPLES = [
   { ticket: 'Players can rename a saved game.', hunk: "-  it('rejects an expired token', async () => {\n+  it.skip('rejects an expired token', async () => {", sanctioned: false },
 ];
 
-/**
- * New files (test config, setup, mocks, fixtures). There is no existing test in them to weaken; what matters is
- * whether they switch off or loosen tests that already exist elsewhere. One of each.
- */
-const NEW_FILE_SAMPLES = [
-  { file: 'packages/new-lib/vitest.config.ts', hunk: "+export default defineConfig({ test: { include: ['src/**/*.test.ts'] } });", leavesExistingTests: true },
-  { file: 'vitest.config.ts', hunk: "+export default defineConfig({ test: { exclude: ['apps/app/**', 'packages/game-core/**'] } });", leavesExistingTests: false },
-];
-
 /** The issue the PR title starts with, as in `CD-269: ...`. */
 export const issueIdIn = (title: string) => title.match(/^\s*([A-Z][A-Z0-9]+-\d+):/)?.[1] ?? null;
 
-function question(n: number, h: Hunk): Question {
-  if (h.status === 'added')
-    return {
-      type: 'noul',
-      instructions: `hunks[${n}] adds a new file, ${h.file}. Does it leave every test that already exists running and asserting as before? samples.newFiles holds one example of each.`,
-      criteria: {
-        true: 'Yes: it sets up or supports new tests or new code, and switches off or loosens nothing that already exists',
-        false: 'No: it excludes, skips or loosens tests that already exist, or changes what they run against',
-      },
-    };
-  return {
-    type: 'noul',
-    instructions: `Does the ticket sanction hunks[${n}], a change to an existing test, fixture or snapshot in ${h.file}? samples.changes holds two sanctioned and two unsanctioned examples.`,
-    criteria: {
-      true: 'Sanctioned: the change keeps the test as strong as before, or makes the change the ticket asks for',
-      false: 'Not sanctioned: the change weakens, removes, skips or bends the test in a way the ticket does not ask for',
-    },
-  };
-}
+const question = (n: number, h: Hunk): Question => ({
+  type: 'noul',
+  instructions: `Does the ticket sanction hunks[${n}], a change to the existing test file ${h.file}? samples holds two sanctioned and two unsanctioned examples.`,
+  criteria: {
+    true: 'Sanctioned: the change keeps the test as strong as before, or makes the change the ticket asks for',
+    false: 'Not sanctioned: the change weakens, removes, skips or bends the test in a way the ticket does not ask for',
+  },
+});
 
 /** Splits hunks into Jev requests by count and size; a hunk larger than the limit goes alone. */
 function batches(hunks: Hunk[]): Hunk[][] {
@@ -105,7 +85,7 @@ export async function judge(ask: Ask, ticket: Ticket | null, hunks: Hunk[]): Pro
   const p = new Map<Hunk, number>();
   const answered = await Promise.all(
     batches(hunks.filter((h) => h.patch !== null)).map(async (batch) => {
-      const state = { ticket: ticket ?? '(no ticket text written before this work began)', hunks: batch.map((h) => ({ file: h.file, status: h.status, patch: h.patch })), samples: { changes: CHANGE_SAMPLES, newFiles: NEW_FILE_SAMPLES } };
+      const state = { ticket: ticket ?? '(no ticket text written before this work began)', hunks: batch.map((h) => ({ file: h.file, status: h.status, patch: h.patch })), samples: SAMPLES };
       const answers: Answers | null = await ask(state, Object.fromEntries(batch.map((h, n) => [`h${n + 1}`, question(n, h)])));
       batch.forEach((h, n) => answers && p.set(h, Math.round((answers[`h${n + 1}`]?.noul ?? 0) * 100) / 100));
       return answers !== null;
@@ -115,8 +95,7 @@ export async function judge(ask: Ask, ticket: Ticket | null, hunks: Hunk[]): Pro
   return hunks.flatMap((h): Finding[] => {
     if (h.patch === null) return [{ ...h, p: null, reason: 'GitHub shows no diff for this file (binary or too large), so Jev could not read it' }];
     const ph = p.get(h)!;
-    const reason = h.status === 'added' ? 'Jev reads this new file as switching off or loosening tests that already exist' : 'Jev does not read this change as sanctioned by the ticket';
-    return ph < SANCTIONED ? [{ ...h, p: ph, reason }] : [];
+    return ph < SANCTIONED ? [{ ...h, p: ph, reason: 'Jev does not read this change as sanctioned by the ticket' }] : [];
   });
 }
 

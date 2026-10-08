@@ -1,33 +1,7 @@
 import picomatch from 'picomatch';
 
-/** Paths that hold tests, their fixtures, snapshots, mocks, helpers and the config that decides what runs. */
-export const TEST_GLOBS = [
-  '**/__tests__/**',
-  '**/test/**',
-  '**/tests/**',
-  '**/*.test.*',
-  '**/*.spec.*',
-  '**/e2e/**',
-  '**/fixtures/**',
-  '**/__fixtures__/**',
-  '**/__snapshots__/**',
-  '**/*.snap',
-  '**/*-snapshots/**',
-  '**/mock/**',
-  '**/mocks/**',
-  '**/__mocks__/**',
-  '**/test-support/**',
-  '**/test-utils/**',
-  '**/vitest.config.*',
-  '**/vitest.setup.*',
-  '**/vitest.workspace.*',
-  '**/jest.config.*',
-  '**/jest.setup.*',
-  '**/playwright.config.*',
-];
-
-/** Test files proper; a new one only adds coverage. A new config, mock or fixture can change what runs, so it is judged. */
-const isNewTestFile = picomatch(['**/*.test.*', '**/*.spec.*', '**/__tests__/**'], { dot: true });
+/** Test files are known by name alone: a `.test.`, `.spec.` or `.e2e.` infix (owner, 8 Oct). */
+export const TEST_GLOBS = ['**/*.test.*', '**/*.spec.*', '**/*.e2e.*'];
 
 export const isTestPath = picomatch(TEST_GLOBS, { dot: true });
 
@@ -57,10 +31,10 @@ export function splitPatch(patch: string): string[] {
   return hunks;
 }
 
-/** The hunks of a PR that touch tests, fixtures, mocks or test config. New test files are left out. */
+/** The hunks of a PR that change, rename or remove a test file that already exists. A new test file only adds coverage. */
 export function existingTestHunks(files: ChangedFile[]): Hunk[] {
   return files
-    .filter((f) => isTestPath(f.previousFilename ?? f.filename) && !(f.status === 'added' && isNewTestFile(f.filename)))
+    .filter((f) => f.status !== 'added' && isTestPath(f.previousFilename ?? f.filename))
     .flatMap((f): Hunk[] => (f.patch ? splitPatch(f.patch).map((patch) => ({ file: f.filename, status: f.status, patch })) : [{ file: f.filename, status: f.status, patch: null }]));
 }
 
