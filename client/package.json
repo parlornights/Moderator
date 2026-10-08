@@ -1,0 +1,23 @@
+{
+  "name": "@parlornights/moderator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Moderator's client: the session hooks, the local gate, the handoff note and the CLI that calls the Moderator service.",
+  "type": "module",
+  "bin": { "moderator": "bin/moderator.js" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "oxlint bin src test && tsc && node --test",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "picomatch": "^4.0.7",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/picomatch": "^4.0.3",
+    "oxlint": "^1.87.0",
+    "typescript": "^7.0.2"
+  }
+}
