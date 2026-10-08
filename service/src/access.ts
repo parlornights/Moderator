@@ -18,7 +18,10 @@ export const accessEmail = (env: Env, keys?: JWTVerifyGetKey): Verify => {
     if (!keys && !jwks.has(issuer)) jwks.set(issuer, createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`)));
     try {
       const { payload } = await jwtVerify(token, keys ?? jwks.get(issuer)!, { issuer, audience: env.ACCESS_AUD });
-      return typeof payload.email === 'string' ? payload.email : null;
+      const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : null;
+      // A valid Access login is not enough: only the listed approvers count, even if the Access policy is ever widened.
+      const approvers = (env.APPROVER_EMAILS ?? '').split(',').map((e) => e.trim().toLowerCase());
+      return email && approvers.includes(email) ? email : null;
     } catch {
       return null;
     }

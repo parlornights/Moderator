@@ -4,19 +4,24 @@ import { createPrivateKey } from 'node:crypto';
 import type { Env } from './env';
 import type { ChangedFile } from './hunks';
 
-/** A completed `test-integrity` check run. Only the App that creates a check run can write it. */
+/** A `test-integrity` check run; without a conclusion it shows as in progress. Only the App can write its check runs. */
 export interface Check {
-  conclusion: 'success' | 'failure' | 'action_required';
+  conclusion?: 'success' | 'failure' | 'action_required';
   title: string;
   summary: string;
   detailsUrl: string;
 }
 
+export interface Compare {
+  files: ChangedFile[];
+  /** Every author and committer date on the commits between base and head. */
+  commitDates: string[];
+}
+
 export interface GitHub {
   verifyWebhook(body: string, signature: string): Promise<boolean>;
-  pullFiles(installationId: number, owner: string, repo: string, pr: number): Promise<ChangedFile[]>;
-  /** Every author and committer date on the PR's commits. */
-  commitDates(installationId: number, owner: string, repo: string, pr: number): Promise<string[]>;
+  /** The diff between exactly these two commits (base...head, from their merge base), so a run judges the commit it posts on. */
+  compare(installationId: number, owner: string, repo: string, base: string, head: string): Promise<Compare>;
   setCheck(installationId: number, owner: string, repo: string, sha: string, check: Check): Promise<void>;
   comment(installationId: number, owner: string, repo: string, pr: number, body: string): Promise<void>;
 }
@@ -45,24 +50,13 @@ export function github(env: Env): GitHub {
   return {
     verifyWebhook: (body, signature) => app.webhooks.verify(body, signature),
 
-    async pullFiles(installationId, owner, repo, pr) {
+    async compare(installationId, owner, repo, base, head) {
       const octokit = await app.getInstallationOctokit(installationId);
-      const files: ChangedFile[] = [];
-      for (let page = 1; ; page++) {
-        const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/files', { owner, repo, pull_number: pr, per_page: 100, page });
-        files.push(...data.map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch })));
-        if (data.length < 100) return files;
-      }
-    },
-
-    async commitDates(installationId, owner, repo, pr) {
-      const octokit = await app.getInstallationOctokit(installationId);
-      const dates: string[] = [];
-      for (let page = 1; ; page++) {
-        const { data } = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/commits', { owner, repo, pull_number: pr, per_page: 100, page });
-        for (const c of data) dates.push(...[c.commit.author?.date, c.commit.committer?.date].filter((d): d is string => !!d));
-        if (data.length < 100) return dates;
-      }
+      const { data } = await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', { owner, repo, basehead: `${base}...${head}` });
+      return {
+        files: (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch })),
+        commitDates: data.commits.flatMap((c) => [c.commit.author?.date, c.commit.committer?.date].filter((d): d is string => !!d)),
+      };
     },
 
     async setCheck(installationId, owner, repo, sha, check) {
@@ -72,8 +66,7 @@ export function github(env: Env): GitHub {
         repo,
         name: CONTEXT,
         head_sha: sha,
-        status: 'completed',
-        conclusion: check.conclusion,
+        ...(check.conclusion ? { status: 'completed' as const, conclusion: check.conclusion } : { status: 'in_progress' as const }),
         details_url: check.detailsUrl,
         output: { title: check.title.slice(0, 255), summary: check.summary.slice(0, 60_000) },
       });

@@ -81,12 +81,13 @@ export function createApp(deps: Deps = realDeps) {
   app.use('/github/setup', ownerOnly);
   app.use('/github/created', ownerOnly);
 
-  app.post('/github/webhook', describeRoute({ tags: ['GitHub'], summary: 'GitHub App webhook', description: 'pull_request events (opened, synchronize, reopened, ready_for_review) run the test-integrity check run. Signed by GitHub with GITHUB_WEBHOOK_SECRET.', security: [] }), async (c) => {
+  app.post('/github/webhook', describeRoute({ tags: ['GitHub'], summary: 'GitHub App webhook', description: 'pull_request events (opened, synchronize, reopened, ready_for_review, and edited when the base branch changed) run the test-integrity check run. Signed by GitHub with GITHUB_WEBHOOK_SECRET.', security: [] }), async (c) => {
     const body = await c.req.text();
     const signature = c.req.header('X-Hub-Signature-256');
     if (!signature || !(await deps.github(c.env).verifyWebhook(body, signature))) return c.json({ error: 'bad signature' }, 401);
     const event = JSON.parse(body) as integrity.PullRequestEvent & { action?: string };
-    if (c.req.header('X-GitHub-Event') !== 'pull_request' || !PR_ACTIONS.has(event.action ?? '')) return c.json({ ignored: true });
+    const rerun = PR_ACTIONS.has(event.action ?? '') || (event.action === 'edited' && event.changes?.base !== undefined);
+    if (c.req.header('X-GitHub-Event') !== 'pull_request' || !rerun) return c.json({ ignored: true });
     const gh = deps.github(c.env);
     const run = integrity
       .check(c.env, { github: gh, linear: deps.linear(c.env), jev: deps.jev(c.env) }, event)
@@ -104,14 +105,14 @@ export function createApp(deps: Deps = realDeps) {
     return c.html(createdPage(await deps.convertManifest(code)));
   });
 
-  app.get('/approve/:owner/:repo/:sha', owner('test-integrity findings', 'The flagged test hunks of one commit, with an Approve button.'), async (c) => {
-    const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
+  app.get('/approve/:owner/:repo/:pr/:sha', owner('test-integrity findings', 'The flagged test hunks of one commit, with an Approve button.'), async (c) => {
+    const row = await integrity.getRow(c.env.DB, { repo: `${c.req.param('owner')}/${c.req.param('repo')}`, pr: Number(c.req.param('pr')), sha: c.req.param('sha') });
     if (!row) return c.text('No test-integrity run for this commit', 404);
     return c.html(approvePage(row, JSON.parse(row.findings), c.req.query('done')));
   });
 
-  app.post('/approve/:owner/:repo/:sha', owner('Approve or reject a commit', 'Form fields `decision` (approve | reject) and optional `reason`. Approve: the check turns green for this commit only. Reject: it fails and the App comments the reason on the PR.'), async (c) => {
-    const row = await integrity.getRow(c.env.DB, `${c.req.param('owner')}/${c.req.param('repo')}`, c.req.param('sha'));
+  app.post('/approve/:owner/:repo/:pr/:sha', owner('Approve or reject a commit', 'Form fields `decision` (approve | reject) and optional `reason`. Approve: the check turns green for this commit only. Reject: it fails and the App comments the reason on the PR.'), async (c) => {
+    const row = await integrity.getRow(c.env.DB, { repo: `${c.req.param('owner')}/${c.req.param('repo')}`, pr: Number(c.req.param('pr')), sha: c.req.param('sha') });
     if (!row) return c.text('No test-integrity run for this commit', 404);
     const form = await c.req.parseBody();
     const decision = form.decision;

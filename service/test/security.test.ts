@@ -23,8 +23,12 @@ describe('accessEmail (real Access tokens)', async () => {
       .sign(key);
   const call = async (jwt?: string) => verify(new Request('https://x/approve', { headers: jwt ? { 'Cf-Access-Jwt-Assertion': jwt } : {} }));
 
-  it("accepts the owner's token and returns the email", async () => {
-    expect(await call(await token({ email: 'owner@example.com' }))).toBe('owner@example.com');
+  it("accepts an approver's token and returns the email", async () => {
+    expect(await call(await token({ email: 'Tsomaia.GE@gmail.com' }))).toBe('tsomaia.ge@gmail.com');
+  });
+
+  it('refuses a valid Access login whose email is not an approver', async () => {
+    expect(await call(await token({ email: 'someone@else.com' }))).toBeNull();
   });
 
   it('refuses no token, a wrong audience or issuer, an expired one, a foreign signature, and a token without an email', async () => {
@@ -52,19 +56,20 @@ describe('github (real Octokit)', () => {
     expect(await gh.verifyWebhook(`${body} `, signature)).toBe(false);
   });
 
-  it('reads every page of PR files and commits, and posts the check run', async () => {
+  it('reads the diff of exactly the two commits, and posts the check run', async () => {
     const sent: { url: string; body?: unknown }[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       sent.push({ url: url.pathname + url.search, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url.pathname.endsWith('/access_tokens')) return Response.json({ token: 't', expires_at: new Date(Date.now() + 3_600_000).toISOString() }, { status: 201 });
-      const page = Number(url.searchParams.get('page'));
-      if (url.pathname.endsWith('/files')) return Response.json(Array.from({ length: page === 1 ? 100 : 5 }, (_, n) => ({ filename: `f${page}-${n}`, status: 'modified' })));
-      if (url.pathname.endsWith('/commits')) return Response.json(page === 1 ? [{ commit: { author: { date: 'a' }, committer: { date: 'c' } } }] : []);
+      if (url.pathname.includes('/compare/'))
+        return Response.json({ files: [{ filename: 'a.test.ts', status: 'modified', patch: '@@' }], commits: [{ commit: { author: { date: 'a' }, committer: { date: 'c' } } }] });
       return Response.json({ id: 1 }, { status: 201 });
     });
-    expect(await gh.pullFiles(9, 'o', 'r', 4)).toHaveLength(105);
-    expect(await gh.commitDates(9, 'o', 'r', 4)).toEqual(['a', 'c']);
+    expect(await gh.compare(9, 'o', 'r', 'b1', 'h1')).toEqual({ files: [{ filename: 'a.test.ts', status: 'modified', previousFilename: undefined, patch: '@@' }], commitDates: ['a', 'c'] });
+    expect(sent.at(-1)?.url).toBe('/repos/o/r/compare/b1...h1');
+    await gh.setCheck(9, 'o', 'r', 'sha0', { title: 'Checking', summary: 'S', detailsUrl: 'https://d' });
+    expect(sent.at(-1)?.body).toMatchObject({ status: 'in_progress' });
     await gh.setCheck(9, 'o', 'r', 'sha1', { conclusion: 'action_required', title: 'T', summary: 'S', detailsUrl: 'https://d' });
     expect(sent.at(-1)).toEqual({
       url: '/repos/o/r/check-runs',

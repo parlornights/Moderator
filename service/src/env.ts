@@ -13,4 +13,6 @@ export interface Env {
   GITHUB_ORG: string;
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
+  /** Comma-separated emails that may approve or reject; Access must also let them in. */
+  APPROVER_EMAILS: string;
 }

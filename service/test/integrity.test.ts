@@ -22,8 +22,7 @@ const ask: Ask = async (state, questions) => {
 };
 const gh: GitHub = {
   verifyWebhook: async (_body, signature) => signature === 'good',
-  pullFiles: async () => files,
-  commitDates: async () => commitDates,
+  compare: async () => ({ files, commitDates }),
   setCheck: async (_i, _o, _r, sha, check) => {
     checks.push({ sha, check });
   },
@@ -40,11 +39,11 @@ const app = createApp({
   convertManifest: async (code) => ({ id: 7, slug: 'parlornights-moderator', pem: `-----BEGIN PRIVATE KEY-----\n${code}`, webhook_secret: 'whsec', html_url: 'https://github.com/apps/x' }),
 });
 
-const event = (sha: string, action = 'synchronize', changed_files = files.length): PullRequestEvent & { action: string } => ({
+const event = (sha: string, action = 'synchronize', changed_files = files.length, base = 'main', pr = 42): PullRequestEvent => ({
   action,
   installation: { id: 1 },
   repository: { name: 'CrookedDuke', full_name: 'parlornights/CrookedDuke', owner: { login: 'parlornights' } },
-  pull_request: { number: 42, title: 'CD-7: players rename games', head: { sha }, user: { login: 'pr-author' }, created_at: '2026-10-08T12:00:00Z', changed_files },
+  pull_request: { number: pr, title: 'CD-7: players rename games', head: { sha }, base: { sha: 'base-sha', ref: base }, user: { login: 'pr-author' }, created_at: '2026-10-08T12:00:00Z', changed_files },
 });
 
 async function hook(body: unknown, { signature = 'good', type = 'pull_request' } = {}) {
@@ -55,11 +54,12 @@ async function hook(body: unknown, { signature = 'good', type = 'pull_request' }
 }
 
 const decide = (sha: string, form: string) =>
-  app.request(`/approve/parlornights/CrookedDuke/${sha}`, { method: 'POST', headers: { Origin: 'http://localhost', 'Content-Type': 'application/x-www-form-urlencoded' }, body: form }, env);
+  app.request(`/approve/parlornights/CrookedDuke/42/${sha}`, { method: 'POST', headers: { Origin: 'http://localhost', 'Content-Type': 'application/x-www-form-urlencoded' }, body: form }, env);
 
 const changed: ChangedFile = { filename: 'src/__tests__/score.test.ts', status: 'modified', patch: '@@ -1 +1 @@\n-  expect(total).toBe(120);\n+  expect(total).toBeGreaterThan(0);' };
 
-beforeEach(() => {
+beforeEach(async () => {
+  await env.DB.exec('DELETE FROM flags');
   answers = null;
   asked = [];
   files = [];
@@ -80,10 +80,18 @@ describe('webhook', () => {
     expect(checks).toEqual([]);
   });
 
+  it('runs again when the PR base branch changes, and not on other edits', async () => {
+    expect(await (await hook({ ...event('a1', 'edited'), changes: { title: { from: 'x' } } })).json()).toEqual({ ignored: true });
+    expect((await hook({ ...event('a1', 'edited'), changes: { base: { ref: { from: 'b1' } } } })).status).toBe(202);
+    expect(checks.at(-1)?.sha).toBe('a1');
+  });
+
   it('is green without asking Jev when no existing test changed', async () => {
     files = [{ filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }, { filename: 'src/new.test.ts', status: 'added', patch: '@@ -0,0 +1 @@\n+x' }];
     expect((await hook(event('a2'))).status).toBe(202);
-    expect(checks).toEqual([{ sha: 'a2', check: expect.objectContaining({ conclusion: 'success', title: 'No existing test changed', detailsUrl: 'https://moderator.parlornights.com/approve/parlornights/CrookedDuke/a2' }) }]);
+    expect(checks[0].check).toMatchObject({ title: 'Checking test changes' });
+    expect(checks[0].check.conclusion).toBeUndefined();
+    expect(checks.at(-1)).toEqual({ sha: 'a2', check: expect.objectContaining({ conclusion: 'success', title: 'No existing test changed', detailsUrl: 'https://moderator.parlornights.com/approve/parlornights/CrookedDuke/42/a2' }) });
     expect(asked).toEqual([]);
   });
 
@@ -94,9 +102,9 @@ describe('webhook', () => {
     await hook(event('a3'));
     expect(linear.ticketBefore).toHaveBeenCalledWith('CD-7', new Date('2026-10-08T09:30:00Z'));
     expect(asked[0].state.ticket).toMatchObject({ id: 'CD-7' });
-    expect(checks[0].check).toMatchObject({ conclusion: 'action_required', title: "1 test change(s) need the owner's decision" });
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required', title: "1 test change(s) need the owner's decision" });
     expect(comments).toEqual([{ pr: 42, body: expect.stringContaining('@pr-author **test-integrity** on a3') }]);
-    expect(comments[0].body).toContain('https://moderator.parlornights.com/approve/parlornights/CrookedDuke/a3');
+    expect(comments[0].body).toContain('https://moderator.parlornights.com/approve/parlornights/CrookedDuke/42/a3');
   });
 
   it('judges with no ticket when no ticket text predates the work', async () => {
@@ -111,7 +119,7 @@ describe('webhook', () => {
     files = [changed];
     answers = { h1: { noul: 0.9 } };
     await hook(event('a4'));
-    expect(checks[0].check).toMatchObject({ conclusion: 'success', title: '1 test change(s), all sanctioned' });
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'success', title: '1 test change(s), all sanctioned' });
     expect(comments).toEqual([]);
   });
 
@@ -131,57 +139,104 @@ describe('webhook', () => {
     expect(asked.length).toBeGreaterThan(2);
     expect(asked.flatMap((a) => a.state.hunks).length).toBe(45);
     expect(asked[0].state.hunks[0].patch).toBe(long);
-    expect(checks[0].check).toMatchObject({ conclusion: 'success', title: '45 test change(s), all sanctioned' });
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'success', title: '45 test change(s), all sanctioned' });
   });
 
   it('flags a hunk Jev gave no answer for', async () => {
     files = [changed, { ...changed, filename: 'src/__tests__/other.test.ts' }];
     answers = { h1: { noul: 0.9 } };
     await hook(event('m1'));
-    expect(checks[0].check).toMatchObject({ conclusion: 'action_required', title: "1 test change(s) need the owner's decision" });
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required', title: "1 test change(s) need the owner's decision" });
   });
 
   it('needs the owner when Jev does not answer, and for a file GitHub shows no diff for', async () => {
     files = [changed];
     await hook(event('a5'));
-    expect(checks[0].check).toMatchObject({ conclusion: 'action_required', title: "Jev did not answer: the owner's decision is needed" });
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required', title: "Jev did not answer: the owner's decision is needed" });
 
     files = [{ filename: 'e2e/home.spec.ts-snapshots/home.png', status: 'modified' }];
     await hook(event('a6'));
     expect(asked).toHaveLength(1);
-    expect(checks[1].check).toMatchObject({ conclusion: 'action_required' });
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required' });
   });
 
   it('needs the owner when GitHub lists fewer files than the PR changed', async () => {
     files = [{ filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
     await hook(event('p1', 'synchronize', 3500));
-    expect(checks[0].check).toMatchObject({ conclusion: 'action_required' });
-    expect(checks[0].check.summary).toContain('GitHub listed 1 of the PR\'s 3500 files');
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required' });
+    expect(checks.at(-1)!.check.summary).toContain('GitHub listed 1 of the PR\'s 3500 files');
   });
 
   it('leaves a red check and a decidable row when the run throws', async () => {
     files = [changed];
     linear.ticketBefore.mockRejectedValue(new Error('Linear is down'));
     await hook(event('e1'));
-    expect(checks[0].check).toMatchObject({ conclusion: 'action_required', title: "The check errored: the owner's decision is needed" });
-    expect(checks[0].check.summary).toContain('Linear is down');
-    expect((await app.request('/approve/parlornights/CrookedDuke/e1', {}, env)).status).toBe(200);
+    expect(checks.at(-1)!.check).toMatchObject({ conclusion: 'action_required', title: "The check errored: the owner's decision is needed" });
+    expect(checks.at(-1)!.check.summary).toContain('Linear is down');
+    expect((await app.request('/approve/parlornights/CrookedDuke/42/e1', {}, env)).status).toBe(200);
+  });
+});
+
+describe('decisions belong to one PR and base', () => {
+  it('judges again when the same commit heads another PR or the base branch changed', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('s1'));
+    await decide('s1', 'decision=approve');
+    expect(checks.at(-1)?.check.conclusion).toBe('success');
+
+    await hook(event('s1', 'opened', 1, 'main', 43));
+    expect(checks.at(-1)?.check.conclusion).toBe('action_required');
+
+    await hook(event('s1', 'edited', 1, 'release'));
+    expect(checks.at(-1)?.check.conclusion).toBe('action_required');
+  });
+
+  it('keeps a flagged hunk flagged on later commits of the PR without asking Jev again', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('k1'));
+    answers = { h1: { noul: 0.99 } };
+    await hook(event('k2'));
+    expect(asked).toHaveLength(1);
+    expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'action_required' });
+    expect(checks.at(-1)?.check.summary).toContain('Flagged on an earlier commit');
+  });
+
+  it('keeps a decision made after the run saved but before it posted', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.9 } };
+    await hook(event('q0'));
+    const setCheck = gh.setCheck;
+    let once = false;
+    gh.setCheck = async (...args) => {
+      if (!once && args[4].conclusion === 'success' && args[3] === 'q1') {
+        once = true;
+        await decide('q1', 'decision=reject');
+      }
+      return setCheck(...args);
+    };
+    try {
+      await hook(event('q1'));
+    } finally {
+      gh.setCheck = setCheck;
+    }
+    await hook(event('q1', 'reopened'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'q1', check: { conclusion: 'failure' } });
   });
 });
 
 describe('workStart', () => {
-  it('is the earliest of the PR creation and every commit date', async () => {
-    commitDates = ['2026-10-08T13:00:00Z', '2026-10-07T08:00:00Z', 'not a date'];
-    expect(await workStart(gh, event('w1'))).toEqual(new Date('2026-10-07T08:00:00Z'));
-    commitDates = ['2026-10-09T00:00:00Z'];
-    expect(await workStart(gh, event('w1'))).toEqual(new Date('2026-10-08T12:00:00Z'));
+  it('is the earliest of the PR creation and every commit date', () => {
+    expect(workStart(event('w1'), ['2026-10-08T13:00:00Z', '2026-10-07T08:00:00Z', 'not a date'])).toEqual(new Date('2026-10-07T08:00:00Z'));
+    expect(workStart(event('w1'), ['2026-10-09T00:00:00Z'])).toEqual(new Date('2026-10-08T12:00:00Z'));
   });
 });
 
 describe('approval page', () => {
   it('is closed without the owner signing in through Access', async () => {
     owner = null;
-    expect((await app.request('/approve/parlornights/CrookedDuke/a3', {}, env)).status).toBe(403);
+    expect((await app.request('/approve/parlornights/CrookedDuke/42/a3', {}, env)).status).toBe(403);
     expect((await app.request('/github/setup', {}, env)).status).toBe(403);
   });
 
@@ -189,14 +244,14 @@ describe('approval page', () => {
     files = [changed];
     answers = { h1: { noul: 0.1 } };
     await hook(event('b1'));
-    const page = await (await app.request('/approve/parlornights/CrookedDuke/b1', {}, env)).text();
+    const page = await (await app.request('/approve/parlornights/CrookedDuke/42/b1', {}, env)).text();
     expect(page).toContain('src/__tests__/score.test.ts');
     expect(page).toContain('toBeGreaterThan(0)');
 
     const res = await decide('b1', 'decision=approve');
     expect(res.status).toBe(303);
-    expect(res.headers.get('Location')).toBe('/approve/parlornights/CrookedDuke/b1?done=approved');
-    const after = await (await app.request('/approve/parlornights/CrookedDuke/b1?done=approved', {}, env)).text();
+    expect(res.headers.get('Location')).toBe('/approve/parlornights/CrookedDuke/42/b1?done=approved');
+    const after = await (await app.request('/approve/parlornights/CrookedDuke/42/b1?done=approved', {}, env)).text();
     expect(after).toContain('Approved. The check is green for this commit.');
     expect(after).not.toContain('name="decision"');
     expect(checks.at(-1)).toMatchObject({ sha: 'b1', check: { conclusion: 'success', title: 'Approved by owner@example.com' } });
@@ -213,7 +268,8 @@ describe('approval page', () => {
     files = [changed];
     answers = { h1: { noul: 0.1 } };
     await hook(event('race'));
-    // The owner approves while a second run (say, a redelivered webhook) is still asking Jev.
+    // The owner approves while a second run (say, a redelivered webhook) is still reading the ticket.
+    await env.DB.exec('DELETE FROM flags');
     linear.ticketBefore.mockImplementation(async () => {
       await decide('race', 'decision=approve');
       return null;
@@ -230,7 +286,7 @@ describe('approval page', () => {
     expect((await decide('r1', 'decision=reject&reason=Keep+the+exact+total%3B+fix+the+scoring+instead.')).status).toBe(303);
     expect(checks.at(-1)).toMatchObject({ sha: 'r1', check: { conclusion: 'failure', title: 'Rejected by the owner: Keep the exact total; fix the scoring instead.' } });
     expect(comments).toEqual([{ pr: 42, body: expect.stringContaining('> Keep the exact total; fix the scoring instead.') }]);
-    const after = await (await app.request('/approve/parlornights/CrookedDuke/r1?done=rejected', {}, env)).text();
+    const after = await (await app.request('/approve/parlornights/CrookedDuke/42/r1?done=rejected', {}, env)).text();
     expect(after).toContain('Rejected. The check fails for this commit');
     expect(after).toContain('Keep the exact total; fix the scoring instead.');
     expect(after).not.toContain('name="decision"');
@@ -266,14 +322,14 @@ describe('approval page', () => {
       gh.comment = comment;
     }
     expect(checks.at(-1)).toMatchObject({ sha: 'f1', check: { conclusion: 'action_required' } });
-    expect((await app.request('/approve/parlornights/CrookedDuke/f1', {}, env)).status).toBe(200);
+    expect((await app.request('/approve/parlornights/CrookedDuke/42/f1', {}, env)).status).toBe(200);
   });
 
   it('refuses a cross-site approval', async () => {
     files = [changed];
     answers = { h1: { noul: 0.1 } };
     await hook(event('c1'));
-    expect((await app.request('/approve/parlornights/CrookedDuke/c1', { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'decision=approve' }, env)).status).toBe(403);
+    expect((await app.request('/approve/parlornights/CrookedDuke/42/c1', { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'decision=approve' }, env)).status).toBe(403);
   });
 });
 
@@ -288,7 +344,9 @@ describe('GitHub App setup', () => {
   });
 });
 
-it('reads the issue id from the PR title', () => {
+it('reads the issue id the PR title starts with', () => {
   expect(issueIdIn('CD-269: CI on wb')).toBe('CD-269');
+  expect(issueIdIn('UTF-8 fix for CD-7')).toBeNull();
+  expect(issueIdIn('  PAR-27: x')).toBe('PAR-27');
   expect(issueIdIn('fix things')).toBeNull();
 });

@@ -53,7 +53,7 @@ const one = <T>(nodes: T[], what: string): T => {
 const TICKET_QUERY = `query Ticket($id: String!) {
   issue(id: $id) {
     identifier title description createdAt
-    history(first: 250) { nodes { createdAt updatedDescription toTitle } pageInfo { hasNextPage } }
+    history(first: 250) { nodes { createdAt updatedAt updatedDescription toTitle } pageInfo { hasNextPage } }
     comments(first: 250) { nodes { body createdAt editedAt } }
   }
 }`;
@@ -64,7 +64,7 @@ interface TicketQuery {
     title: string;
     description: string | null;
     createdAt: string;
-    history: { nodes: { createdAt: string; updatedDescription: boolean | null; toTitle: string | null }[]; pageInfo: { hasNextPage: boolean } };
+    history: { nodes: { createdAt: string; updatedAt: string; updatedDescription: boolean | null; toTitle: string | null }[]; pageInfo: { hasNextPage: boolean } };
     comments: { nodes: { body: string; createdAt: string; editedAt: string | null }[] };
   };
 }
@@ -92,7 +92,7 @@ export function linear(apiKey: string): Linear {
       }
       const changed = (pick: (h: TicketQuery['issue']['history']['nodes'][number]) => boolean) =>
         // A history longer than one page cannot be read in full, so nothing in it counts.
-        issue.history.pageInfo.hasNextPage ? Infinity : Math.max(Date.parse(issue.createdAt), ...issue.history.nodes.filter(pick).map((h) => Date.parse(h.createdAt)));
+        issue.history.pageInfo.hasNextPage ? Infinity : Math.max(Date.parse(issue.createdAt), ...issue.history.nodes.filter(pick).map((h) => Math.max(Date.parse(h.createdAt), Date.parse(h.updatedAt ?? h.createdAt))));
       const t = before.getTime();
       const ticket: Ticket = {
         id: issue.identifier,

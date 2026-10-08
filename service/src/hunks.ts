@@ -24,7 +24,13 @@ export const TEST_GLOBS = [
   '**/jest.config.*',
   '**/jest.setup.*',
   '**/playwright.config.*',
+  '**/vite.config.*',
+  '**/package.json',
+  '.github/workflows/**',
 ];
+
+/** Test files proper; a new one only adds coverage. A new config, mock or fixture can change what runs, so it is judged. */
+const isNewTestFile = picomatch(['**/*.test.*', '**/*.spec.*', '**/__tests__/**'], { dot: true });
 
 export const isTestPath = picomatch(TEST_GLOBS, { dot: true });
 
@@ -52,9 +58,16 @@ export function splitPatch(patch: string): string[] {
   return hunks;
 }
 
-/** The hunks of a PR that touch a test file that already exists on the base branch. New test files are left out. */
+/** The hunks of a PR that touch tests, fixtures, mocks or test config. New test files are left out. */
 export function existingTestHunks(files: ChangedFile[]): Hunk[] {
   return files
-    .filter((f) => f.status !== 'added' && isTestPath(f.previousFilename ?? f.filename))
+    .filter((f) => isTestPath(f.previousFilename ?? f.filename) && !(f.status === 'added' && isNewTestFile(f.filename)))
     .flatMap((f): Hunk[] => (f.patch ? splitPatch(f.patch).map((patch) => ({ file: f.filename, status: f.status, patch })) : [{ file: f.filename, status: f.status, patch: null }]));
+}
+
+/** Identifies a hunk by its file and changed lines, not its line numbers, so it is recognised on a later commit. */
+export async function hunkHash(h: Hunk): Promise<string> {
+  const body = (h.patch ?? '').split('\n').filter((l) => !l.startsWith('@@')).join('\n');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${h.file}\n${body}`));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }

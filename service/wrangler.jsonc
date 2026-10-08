@@ -11,7 +11,8 @@
     "PUBLIC_URL": "https://moderator.parlornights.com",
     "GITHUB_ORG": "parlornights",
     "ACCESS_TEAM_DOMAIN": "white-block-c25b.cloudflareaccess.com",
-    "ACCESS_AUD": "2edc6d40922878f99585506083fc9b0bbd33582436b95c6a7b6aaca6bb968183"
+    "ACCESS_AUD": "2edc6d40922878f99585506083fc9b0bbd33582436b95c6a7b6aaca6bb968183",
+    "APPROVER_EMAILS": "tsomaia.ge@gmail.com,tornike@parlornights.com,tornike.tsomaia@icloud.com"
   },
   "observability": { "enabled": true }
 }
