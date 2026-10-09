@@ -11,6 +11,19 @@ const { turns } = await import('../src/transcript.js');
 const LONG = 'x'.repeat(600);
 const rec = (type, content, extra = {}) => ({ type, message: { content }, ...extra });
 
+test('turns leave out the user entries the harness wrote, and keep an interrupt', () => {
+  const r = repo();
+  const t = transcript(r.scratch, [
+    rec('user', 'the owner asks'),
+    rec('user', 'Stop hook feedback:\n[~/.claude/stop-hook-git-check.sh]: uncommitted changes'),
+    rec('user', '<task-notification>\n<summary>1 unread notification</summary>\n</task-notification>'),
+    rec('user', 'This session is being continued from a previous conversation that ran out of context. Summary: ...'),
+    rec('user', '[Request interrupted by user for tool use]'),
+    rec('assistant', 'the answer'),
+  ]);
+  assert.deepEqual(turns(t).map((x) => x.text), ['the owner asks', '[Request interrupted by user for tool use]', 'the answer']);
+});
+
 test('turns keep their full text and drop tool calls, tool-only turns, reminders and sidechains', () => {
   const r = repo();
   const t = transcript(r.scratch, [

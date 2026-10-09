@@ -23,7 +23,9 @@ const HELP = `moderator <command>
   linear update <ID> [--title <t>] [--description-file <f|->] [--status <s>] [--priority <0-4>]
                 [--add-label <l>]... [--remove-label <l>]... [--link <url> --link-title <t>]
   linear comment <ID> --body-file <f|->         Linear writes through Moderator, judged by Jev
-  hook <name>                                   a Claude Code hook (reads its JSON on stdin)`;
+  user-hooks                                    copy this repo's hooks into ~/.claude/settings.json, so they keep firing
+                                                when the session's project is not the repo (the environment's setup script)
+  hook <name> [--repo <dir>]                    a Claude Code hook (reads its JSON on stdin)`;
 
 /**
  * @template {import('node:util').ParseArgsOptionsConfig} T
@@ -191,8 +193,16 @@ const commands = {
     return 3;
   },
 
+  async 'user-hooks'() {
+    const { root } = await import('../src/git.js');
+    const { installUserHooks } = await import('../src/userhooks.js');
+    const n = installUserHooks({ repo: root() });
+    console.log(n ? `${n} user-level hooks for ${root()} in ~/.claude/settings.json` : `no hooks in ${root()}/.claude/settings.json; no copy left in ~/.claude/settings.json`);
+  },
+
   async hook(args) {
-    const [name] = args;
+    const { values, positionals } = opts(args, { repo: { type: 'string' } });
+    const [name] = positionals;
     const hooks = ['session-start', 'stop', 'subagent-start', 'subagent-stop', 'pre-compact', 'guard', 'post-edit', 'post-artifact', 'context-watch'];
     if (!hooks.includes(name)) throw new Error(`hook needs one of ${hooks.join(', ')}`);
     let input = {};
@@ -209,6 +219,16 @@ const commands = {
         process.chdir(i.cwd);
       } catch {
         /* keep the current directory */
+      }
+    }
+    // A user-level copy (userhooks.js) names its repo: when the session works outside it, the task's hooks still
+    // read and write that repo. The file hooks judge the file in hand, so they never fall back.
+    if (values.repo && !['guard', 'post-edit'].includes(name)) {
+      const { root } = await import('../src/git.js');
+      try {
+        if (!fs.existsSync(`${root()}/moderator.config.json`)) process.chdir(values.repo);
+      } catch {
+        /* the repo is gone: the hook runs where the session is, and stays quiet there */
       }
     }
     /** @type {import('../src/hooks/io.js').HookResult | void} */

@@ -61,6 +61,19 @@ whatever the plugin is called, as the hooks do.
 The issue is the one the branch name carries (`issuePattern`); a branch without one gets no ledger, and the hooks
 stay quiet there. The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, the gate's results and logs.
 
+### Sessions with more than one repository
+
+Claude Code reads a repo's `.claude/settings.json` only while the session's project is that repo. When a second
+repository joins a cloud session, the project becomes their parent directory and every repo hook stops, compaction
+hooks included. `moderator user-hooks`, run in the repo, copies its hooks into `~/.claude/settings.json`, which keep
+firing wherever the session works. Each copy is skipped while the project is the repo itself, so nothing runs twice,
+and `moderator hook` gets `--repo`, so a session working in the other repository still grounds on this repo's task
+(the guard and post-edit judge the file in hand and never fall back). Run it from the cloud environment's setup script:
+
+```sh
+cd /home/user/<repo> && pnpm install --frozen-lockfile && pnpm exec moderator user-hooks
+```
+
 ## Skills and agents
 
 The protocol's skills (`delegate`, `handoff`, `unit-protocol`, `papercut`) and agents (`unit`, `unit-deep`,
