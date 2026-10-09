@@ -18,6 +18,7 @@ const HELP = `moderator <command>
   papercut <gate|scope|protocol|repo|flake> "<what> -> <fix>" | --list | --mark
                                                 log a learning; list the open ones; mark them consolidated
   unit-watch [--transcript <p>]                 the session's running units, their PRs, and what needs doing
+  sync [--check]                                copy the protocol's skills and agents into .claude/; --check fails on drift
   linear issue --team <key> --title <t> --description-file <f|-> [--project <name>] [--parent <ID>]
   linear update <ID> [--title <t>] [--description-file <f|->] [--status <s>] [--priority <0-4>]
                 [--add-label <l>]... [--remove-label <l>]... [--link <url> --link-title <t>]
@@ -124,6 +125,17 @@ const commands = {
     const { formatUnits, newestTranscript, watch } = await import('../src/units.js');
     const transcript = values.transcript || newestTranscript();
     console.log(transcript ? formatUnits(watch(transcript)) : 'unit-watch: no session transcript found');
+  },
+
+  async sync(args) {
+    const { values } = opts(args, { check: { type: 'boolean' } });
+    const { check, sync } = await import('../src/sync.js');
+    if (!values.check) return void console.log(sync().map((f) => `wrote ${f}`).join('\n'));
+    const drift = check();
+    for (const d of drift) console.log(`${d.file}: ${d.why}`);
+    if (drift.length) console.log('run `moderator sync` and commit, or change the file in Moderator instead');
+    else console.log('skills and agents match the pinned version');
+    return drift.length ? 1 : 0;
   },
 
   async linear(args) {
