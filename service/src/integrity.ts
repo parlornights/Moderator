@@ -113,6 +113,18 @@ export interface Key {
   sha: string;
 }
 
+/**
+ * One fingerprint per test file: the hashes of all its changed hunks. A file whose changes are exactly those the owner
+ * approved has the same fingerprint on a later commit; any change to it gives another.
+ */
+async function fileHashes(hunks: Hunk[]): Promise<Map<string, string>> {
+  const byFile = new Map<string, string[]>();
+  for (const h of hunks) byFile.set(h.file, [...(byFile.get(h.file) ?? []), await hunkHash(h)]);
+  const out = new Map<string, string>();
+  for (const [file, hashes] of byFile) out.set(file, await hunkHash({ file, status: 'file', patch: hashes.sort().join('\n') }));
+  return out;
+}
+
 const keyOf = (e: PullRequestEvent): Key => ({ repo: e.repository.full_name, pr: e.pull_request.number, sha: e.pull_request.head.sha });
 const decided = (row: IntegrityRow | null) => row?.state === 'approved' || row?.state === 'rejected';
 
@@ -199,7 +211,15 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
   const fingerprint = await diffHash(files);
   await env.DB.prepare('UPDATE integrity SET diff_hash = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(fingerprint, k.repo, k.pr, k.sha).run();
   if (await carryApproval(env, deps.github, e, fingerprint)) return;
-  const hunks = existingTestHunks(files);
+  const all = existingTestHunks(files);
+  // A file whose changes the owner approved on an earlier commit of this PR and base, unchanged since (owner, Q48 A).
+  const byFile = await fileHashes(all.filter((h) => h.patch !== null));
+  await env.DB.prepare('UPDATE integrity SET test_files = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(JSON.stringify(Object.fromEntries(byFile)), k.repo, k.pr, k.sha).run();
+  const approvedFiles = new Map(
+    (await env.DB.prepare('SELECT hash, sha, decided_by FROM approved_files WHERE repo = ? AND pr = ? AND base_ref = ?').bind(k.repo, k.pr, e.pull_request.base.ref).all<{ hash: string; sha: string; decided_by: string }>()).results.map((r) => [r.hash, r]),
+  );
+  const carried = all.filter((h) => h.patch !== null && approvedFiles.has(byFile.get(h.file)!));
+  const hunks = all.filter((h) => !carried.includes(h));
   const sticky = new Set(
     (await env.DB.prepare('SELECT hash FROM flags WHERE repo = ? AND pr = ?').bind(k.repo, k.pr).all<{ hash: string }>()).results.map((r) => r.hash),
   );
@@ -216,13 +236,18 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
     findings.push({ file: '(whole PR)', status: 'unlisted', patch: null, p: null, reason: `GitHub listed ${files.length} of the PR's ${e.pull_request.changed_files} files, so the rest were not checked` });
 
   for (const f of findings) if (f.patch !== null) await env.DB.prepare('INSERT OR IGNORE INTO flags (repo, pr, hash) VALUES (?, ?, ?)').bind(k.repo, k.pr, await hunkHash(f)).run();
+  const carriedFiles = [...new Set(carried.map((h) => h.file))];
+  const carriedText = `${carried.length} approved earlier by ${[...new Set(carriedFiles.map((f) => approvedFiles.get(byFile.get(f)!)!.decided_by))].join(', ')} and unchanged since (${carriedFiles.join(', ')})`;
+  const approvedNote = carried.length ? `; ${carriedText}` : '';
   const result = findings.length
     ? judged === null && fresh.length
       ? "Jev did not answer: the owner's decision is needed"
-      : `${findings.length} test change(s) need the owner's decision`
+      : `${findings.length} test change(s) need the owner's decision${approvedNote}`
     : hunks.length
-      ? `${hunks.length} test change(s), all sanctioned`
-      : 'No existing test changed';
+      ? `${hunks.length} test change(s), all sanctioned${approvedNote}`
+      : carried.length
+        ? `No new test change: ${carriedText}`
+        : 'No existing test changed';
   await publish(env, deps.github, e, { state: findings.length ? 'failure' : 'success', result, findings, issue });
 }
 
@@ -278,6 +303,7 @@ export interface IntegrityRow extends Key {
   decided_at: string | null;
   reason: string | null;
   diff_hash: string | null;
+  test_files: string | null;
 }
 
 export const getRow = (db: D1Database, k: Key) => db.prepare('SELECT * FROM integrity WHERE repo = ? AND pr = ? AND sha = ?').bind(k.repo, k.pr, k.sha).first<IntegrityRow>();
@@ -291,9 +317,17 @@ export async function decide(env: Env, gh: GitHub, row: IntegrityRow, d: { by: s
   const [owner, repo] = row.repo.split('/');
   // The check first: if GitHub refuses it, nothing is recorded and the page still offers the decision.
   await gh.setCheck(row.installation_id, owner, repo, row.sha, checkFor(env, decision));
-  await env.DB.prepare("UPDATE integrity SET state = ?, decided_by = ?, decided_at = ?, reason = ? WHERE repo = ? AND pr = ? AND sha = ? AND state NOT IN ('approved', 'rejected')")
+  const { meta } = await env.DB.prepare("UPDATE integrity SET state = ?, decided_by = ?, decided_at = ?, reason = ? WHERE repo = ? AND pr = ? AND sha = ? AND state NOT IN ('approved', 'rejected')")
     .bind(decision.state, decision.decided_by, decision.decided_at, decision.reason, row.repo, row.pr, row.sha)
     .run();
+  if (d.approve && meta.changes > 0) {
+    // Each approved test file, by the exact changes it carries at this commit, so a later commit that leaves it as it
+    // is keeps the approval (owner, Q48 A).
+    const files = new Set((JSON.parse(row.findings) as Finding[]).filter((f) => f.patch !== null).map((f) => f.file));
+    const hashes = JSON.parse(row.test_files ?? '{}') as Record<string, string>;
+    for (const [file, hash] of Object.entries(hashes).filter(([f]) => files.has(f)))
+      await env.DB.prepare('INSERT OR IGNORE INTO approved_files (repo, pr, base_ref, hash, file, sha, decided_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(row.repo, row.pr, row.base_ref, hash, file, row.sha, d.by).run();
+  }
   if (!d.approve) {
     const body = [`The owner **rejected** the test changes in ${short(row.sha)}.`, decision.reason ? `\n> ${decision.reason.replace(/\n/g, '\n> ')}` : '', '\nRevert or rework them, then push; the new commit is checked again.'].join('\n');
     await commentSafely(gh, row.installation_id, owner, repo, row.pr, body);
