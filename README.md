@@ -3,6 +3,9 @@
 A Cloudflare Worker at `moderator.parlornights.com` that holds the secrets agent sessions must not have, and does the
 privileged actions for them: Jev checks and Linear writes. Every call is recorded in an audit log.
 
+The client a repository installs for its sessions (hooks, the local gate, the handoff note, the `moderator` command)
+is in [`client/`](client/README.md).
+
 ## Calling it
 
 The full API is described at `/openapi.json` and browsable at `/docs` (Swagger UI; use **Authorize** with a key to try calls).
