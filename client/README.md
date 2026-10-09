@@ -61,10 +61,25 @@ whatever the plugin is called, as the hooks do.
 The issue is the one the branch name carries (`issuePattern`); a branch without one gets no ledger, and the hooks
 stay quiet there. The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, the gate's results and logs.
 
+## Skills and agents
+
+The protocol's skills (`delegate`, `handoff`, `unit-protocol`, `papercut`) and agents (`unit`, `unit-deep`,
+`reviewer`, `Explore`) ship in `claude/`. Cloud sessions load a repository's own `.claude/skills` and `.claude/agents`,
+and a plugin reaches them only through an organization's managed settings (Team and Enterprise plans), so the files are
+copied in:
+
+```sh
+moderator sync           # writes them into .claude/; commit the result
+moderator sync --check   # exits 1 when a copy is missing or differs from the pinned version (run it in CI)
+```
+
+Change a skill or agent here, never in a repository's copy. The repository keeps its own `repo-map` skill, which the
+unit agents preload. List `.claude/**` in `protectedPaths` so no subagent edits the copies.
+
 ## Commands
 
 `moderator help` lists them: `scope`, `gate`, `risk`, `pick`, `handback`, `handoff`, `orient`, `papercut`,
-`unit-watch`, and `linear issue | update | comment`.
+`unit-watch`, `sync`, and `linear issue | update | comment`.
 
 A Linear write goes through the service, which asks Jev whether it is a product-level write. When Jev refuses or
 does not answer, nothing is written and the command exits 3; the agent then uses the Linear connector's own tool,
