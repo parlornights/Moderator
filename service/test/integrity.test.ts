@@ -181,6 +181,23 @@ describe('webhook', () => {
     expect(checks.at(-1)!.check.summary).toContain('GitHub listed 1 of the PR\'s 3500 files');
   });
 
+  it('carries nothing when reading the diff fails', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('g1'));
+    await decide('g1', 'decision=approve');
+    const compare = gh.compare;
+    gh.compare = async () => {
+      throw new Error('GitHub GraphQL refused the base blobs');
+    };
+    try {
+      await hook(event('g2'));
+    } finally {
+      gh.compare = compare;
+    }
+    expect(checks.at(-1)).toMatchObject({ sha: 'g2', check: { conclusion: 'action_required', title: "The check errored: the owner's decision is needed" } });
+  });
+
   it('leaves a red check and a decidable row when the run throws', async () => {
     files = [changed];
     linear.ticketBefore.mockRejectedValue(new Error('Linear is down'));
@@ -321,6 +338,10 @@ describe('decisions belong to one PR and base', () => {
     files = [blind, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
     await hook(event('u2'));
     expect(checks.at(-1)).toMatchObject({ sha: 'u2', check: { conclusion: 'action_required', summary: expect.stringContaining('fixtures.e2e.ts') } });
+    // Nor over the whole PR's diff, which says nothing about its content either.
+    files = [blind];
+    await hook(event('u2b'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'u2b', check: { conclusion: 'action_required', summary: expect.stringContaining('fixtures.e2e.ts') } });
 
     // A removed file is known by its blob at the merge base.
     const removed: ChangedFile = { filename: 'e2e/old.e2e.ts', status: 'removed', baseSha: 'old1' };

@@ -125,6 +125,9 @@ async function fileHashes(hunks: Hunk[]): Promise<Map<string, string>> {
   return out;
 }
 
+/** A file with no patch and no head blob sha: nothing says it is unchanged. A removed one is known by its base blob. */
+const blind = (f: { patch?: string | null; sha?: string; status: string }) => !f.patch && !f.sha && f.status !== 'removed';
+
 const keyOf = (e: PullRequestEvent): Key => ({ repo: e.repository.full_name, pr: e.pull_request.number, sha: e.pull_request.head.sha });
 const decided = (row: IntegrityRow | null) => row?.state === 'approved' || row?.state === 'rejected';
 
@@ -210,12 +213,11 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
   const { files, commitDates } = await deps.github.compare(e.installation.id, owner, repo, e.pull_request.base.sha, k.sha);
   const fingerprint = await diffHash(files);
   await env.DB.prepare('UPDATE integrity SET diff_hash = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(fingerprint, k.repo, k.pr, k.sha).run();
-  if (await carryApproval(env, deps.github, e, fingerprint)) return;
+  // A file with no patch and no head blob sha leaves the fingerprint blind to its content, so nothing carries over it.
+  if (!files.some(blind) && (await carryApproval(env, deps.github, e, fingerprint))) return;
   const all = existingTestHunks(files);
   // A file whose changes the owner approved on an earlier commit of this PR and base, unchanged since (owner, Q48 A).
-  // A file with no patch and no head blob sha has nothing to say it is unchanged, so it never carries; a removed one is
-  // known by its base blob.
-  const byFile = await fileHashes(all.filter((h) => h.patch !== null || h.sha || h.status === 'removed'));
+  const byFile = await fileHashes(all.filter((h) => !blind(h)));
   await env.DB.prepare('UPDATE integrity SET test_files = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(JSON.stringify(Object.fromEntries(byFile)), k.repo, k.pr, k.sha).run();
   const approvedFiles = new Map(
     (await env.DB.prepare('SELECT hash, sha, decided_by FROM approved_files WHERE repo = ? AND pr = ? AND base_ref = ?').bind(k.repo, k.pr, e.pull_request.base.ref).all<{ hash: string; sha: string; decided_by: string }>()).results.map((r) => [r.hash, r]),

@@ -60,6 +60,7 @@ describe('github (real Octokit)', () => {
   it('reads the diff of exactly the two commits, and posts the check run', async () => {
     const sent: { url: string; body?: unknown }[] = [];
     let graphql: { query: string; variables: Record<string, string> }[] = [];
+    let graphqlErrors = false;
     let compare: unknown = { files: [{ filename: 'a.test.ts', status: 'modified', patch: '@@' }], commits: [{ commit: { author: { date: 'a' }, committer: { date: 'c' } } }] };
     const blobs: Record<string, string> = { 'mb1:big.test.ts': 'b-big', 'mb1:moved.test.ts': 'h2' };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -70,6 +71,7 @@ describe('github (real Octokit)', () => {
       if (url.pathname === '/graphql') {
         const { query, variables } = JSON.parse(String(init!.body)) as { query: string; variables: Record<string, string> };
         graphql.push({ query, variables });
+        if (graphqlErrors) return Response.json({ data: null, errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded' }] });
         const repository = Object.fromEntries(Object.entries(variables).filter(([k]) => /^e\d+$/.test(k)).map(([k, v]) => [`f${k.slice(1)}`, blobs[v] ? { oid: blobs[v] } : null]));
         return Response.json({ data: { repository } });
       }
@@ -97,7 +99,21 @@ describe('github (real Octokit)', () => {
       { filename: 'added.png', status: 'added', previousFilename: undefined, patch: undefined, sha: 'h3', baseSha: null },
     ]);
     expect(graphql).toHaveLength(1);
-    expect(graphql[0].variables).toEqual({ owner: 'o', repo: 'r', e0: 'mb1:big.test.ts', e1: 'mb1:moved.test.ts', e2: 'mb1:added.png' });
+    // An added file was not at the merge base: no lookup.
+    expect(graphql[0].variables).toEqual({ owner: 'o', repo: 'r', e0: 'mb1:big.test.ts', e1: 'mb1:moved.test.ts' });
+
+    // 101 files go in two requests, each numbering its own files from 0.
+    graphql = [];
+    compare = { merge_base_commit: { sha: 'mb1' }, files: Array.from({ length: 101 }, (_, n) => ({ filename: `f${n}.bin`, status: 'modified', sha: `h${n}` })), commits: [] };
+    for (let n = 0; n < 101; n++) blobs[`mb1:f${n}.bin`] = `b${n}`;
+    const many = (await gh.compare(9, 'o', 'r', 'b1', 'h1')).files;
+    expect(graphql.map((g) => Object.keys(g.variables).length)).toEqual([102, 3]);
+    expect(graphql[1].variables).toEqual({ owner: 'o', repo: 'r', e0: 'mb1:f100.bin' });
+    expect(many.map((f) => f.baseSha)).toEqual(Array.from({ length: 101 }, (_, n) => `b${n}`));
+
+    // A GraphQL error fails the read rather than leaving a file without its base blob.
+    graphqlErrors = true;
+    await expect(gh.compare(9, 'o', 'r', 'b1', 'h1')).rejects.toThrow();
     await gh.setCheck(9, 'o', 'r', 'sha0', { title: 'Checking', summary: 'S', detailsUrl: 'https://d' });
     expect(sent.at(-1)?.body).toMatchObject({ status: 'in_progress' });
     await gh.setCheck(9, 'o', 'r', 'sha1', { conclusion: 'action_required', title: 'T', summary: 'S', detailsUrl: 'https://d' });

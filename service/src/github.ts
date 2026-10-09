@@ -58,7 +58,8 @@ export function github(env: Env): GitHub {
       const { data } = await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', { owner, repo, basehead: `${base}...${head}` });
       const files: ChangedFile[] = (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch, sha: f.patch ? undefined : (f.sha ?? undefined) }));
       // A file with no patch is known by its blobs; the one at the merge base (compare is three-dot) says what the PR changed.
-      const noPatch = files.filter((f) => !f.patch);
+      const noPatch = files.filter((f) => !f.patch && f.status !== 'added');
+      for (const f of files) if (!f.patch && f.status === 'added') f.baseSha = null;
       for (let i = 0; i < noPatch.length; i += BLOB_BATCH) {
         const batch = noPatch.slice(i, i + BLOB_BATCH);
         const vars = Object.fromEntries(batch.map((f, n) => [`e${n}`, `${data.merge_base_commit.sha}:${f.previousFilename ?? f.filename}`]));
