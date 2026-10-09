@@ -59,16 +59,45 @@ describe('github (real Octokit)', () => {
 
   it('reads the diff of exactly the two commits, and posts the check run', async () => {
     const sent: { url: string; body?: unknown }[] = [];
+    let graphql: { query: string; variables: Record<string, string> }[] = [];
+    let compare: unknown = { files: [{ filename: 'a.test.ts', status: 'modified', patch: '@@' }], commits: [{ commit: { author: { date: 'a' }, committer: { date: 'c' } } }] };
+    const blobs: Record<string, string> = { 'mb1:big.test.ts': 'b-big', 'mb1:moved.test.ts': 'h2' };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       sent.push({ url: url.pathname + url.search, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url.pathname.endsWith('/access_tokens')) return Response.json({ token: 't', expires_at: new Date(Date.now() + 3_600_000).toISOString() }, { status: 201 });
-      if (url.pathname.includes('/compare/'))
-        return Response.json({ files: [{ filename: 'a.test.ts', status: 'modified', patch: '@@' }], commits: [{ commit: { author: { date: 'a' }, committer: { date: 'c' } } }] });
+      if (url.pathname.includes('/compare/')) return Response.json(compare);
+      if (url.pathname === '/graphql') {
+        const { query, variables } = JSON.parse(String(init!.body)) as { query: string; variables: Record<string, string> };
+        graphql.push({ query, variables });
+        const repository = Object.fromEntries(Object.entries(variables).filter(([k]) => /^e\d+$/.test(k)).map(([k, v]) => [`f${k.slice(1)}`, blobs[v] ? { oid: blobs[v] } : null]));
+        return Response.json({ data: { repository } });
+      }
       return Response.json({ id: 1 }, { status: 201 });
     });
     expect(await gh.compare(9, 'o', 'r', 'b1', 'h1')).toEqual({ files: [{ filename: 'a.test.ts', status: 'modified', previousFilename: undefined, patch: '@@' }], commitDates: ['a', 'c'] });
     expect(sent.at(-1)?.url).toBe('/repos/o/r/compare/b1...h1');
+
+    // Files GitHub sends no patch for carry their blob at the merge base, looked up in one GraphQL request.
+    graphql = [];
+    compare = {
+      merge_base_commit: { sha: 'mb1' },
+      files: [
+        { filename: 'a.test.ts', status: 'modified', patch: '@@' },
+        { filename: 'big.test.ts', status: 'modified', sha: 'h1' },
+        { filename: 'new/moved.test.ts', previous_filename: 'moved.test.ts', status: 'renamed', sha: 'h2' },
+        { filename: 'added.png', status: 'added', sha: 'h3' },
+      ],
+      commits: [],
+    };
+    expect((await gh.compare(9, 'o', 'r', 'b1', 'h1')).files).toEqual([
+      { filename: 'a.test.ts', status: 'modified', previousFilename: undefined, patch: '@@' },
+      { filename: 'big.test.ts', status: 'modified', previousFilename: undefined, patch: undefined, sha: 'h1', baseSha: 'b-big' },
+      { filename: 'new/moved.test.ts', status: 'renamed', previousFilename: 'moved.test.ts', patch: undefined, sha: 'h2', baseSha: 'h2' },
+      { filename: 'added.png', status: 'added', previousFilename: undefined, patch: undefined, sha: 'h3', baseSha: null },
+    ]);
+    expect(graphql).toHaveLength(1);
+    expect(graphql[0].variables).toEqual({ owner: 'o', repo: 'r', e0: 'mb1:big.test.ts', e1: 'mb1:moved.test.ts', e2: 'mb1:added.png' });
     await gh.setCheck(9, 'o', 'r', 'sha0', { title: 'Checking', summary: 'S', detailsUrl: 'https://d' });
     expect(sent.at(-1)?.body).toMatchObject({ status: 'in_progress' });
     await gh.setCheck(9, 'o', 'r', 'sha1', { conclusion: 'action_required', title: 'T', summary: 'S', detailsUrl: 'https://d' });

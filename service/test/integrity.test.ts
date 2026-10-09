@@ -260,7 +260,7 @@ describe('decisions belong to one PR and base', () => {
 
   it('carries an approval of a test file GitHub sends no patch for while it stays as approved, and asks again when it changes', async () => {
     // A pure rename: GitHub sends no patch, only the blob sha.
-    const renamed: ChangedFile = { filename: 'infra/session/__tests__/sandbox-net.test.mjs', previousFilename: 'infra/sandbox-net.test.mjs', status: 'renamed', sha: 'blob1' };
+    const renamed: ChangedFile = { filename: 'infra/session/__tests__/sandbox-net.test.mjs', previousFilename: 'infra/sandbox-net.test.mjs', status: 'renamed', sha: 'blob1', baseSha: 'blob1' };
     files = [renamed];
     await hook(event('n1'));
     expect(checks.at(-1)).toMatchObject({ sha: 'n1', check: { conclusion: 'action_required', summary: expect.stringContaining('no diff') } });
@@ -282,6 +282,54 @@ describe('decisions belong to one PR and base', () => {
     await hook(event('n4'));
     expect(checks.at(-1)).toMatchObject({ sha: 'n4', check: { conclusion: 'action_required' } });
     expect(asked).toHaveLength(0);
+  });
+
+  it('asks again about an approved file with no patch when its blob at the merge base changes, though its head blob is the same', async () => {
+    // Too large for a patch. The PR keeps its own version (big2) of a file main later changes (big1 -> big3).
+    const big: ChangedFile = { filename: 'e2e/fixtures.e2e.ts', status: 'modified', sha: 'big2', baseSha: 'big1' };
+    const app: ChangedFile = { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' };
+    files = [big];
+    await hook(event('v1'));
+    await decide('v1', 'decision=approve');
+
+    // Unchanged: the whole-diff carry, then the per-file carry.
+    await hook(event('v2'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'v2', check: { conclusion: 'success', summary: expect.stringContaining('Carried from v1') } });
+    files = [big, app];
+    await hook(event('v3'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'v3', check: { conclusion: 'success', title: expect.stringContaining('approved earlier') } });
+
+    // Main's change is merged in and reverted by the PR: neither carry applies.
+    files = [{ ...big, baseSha: 'big3' }];
+    await hook(event('v4'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'v4', check: { conclusion: 'action_required', summary: expect.stringContaining('fixtures.e2e.ts') } });
+    files = [{ ...big, baseSha: 'big3' }, app];
+    await hook(event('v5'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'v5', check: { conclusion: 'action_required', summary: expect.stringContaining('fixtures.e2e.ts') } });
+
+    // Gone from the merge base reads differently from any blob.
+    files = [{ ...big, baseSha: null }, app];
+    await hook(event('v6'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'v6', check: { conclusion: 'action_required' } });
+  });
+
+  it('never carries an approval of a file with no patch and no head blob sha', async () => {
+    const blind: ChangedFile = { filename: 'e2e/fixtures.e2e.ts', status: 'modified', baseSha: 'big1' };
+    files = [blind];
+    await hook(event('u1'));
+    await decide('u1', 'decision=approve');
+    files = [blind, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    await hook(event('u2'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'u2', check: { conclusion: 'action_required', summary: expect.stringContaining('fixtures.e2e.ts') } });
+
+    // A removed file is known by its blob at the merge base.
+    const removed: ChangedFile = { filename: 'e2e/old.e2e.ts', status: 'removed', baseSha: 'old1' };
+    files = [removed];
+    await hook(event('u3'));
+    await decide('u3', 'decision=approve');
+    files = [removed, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    await hook(event('u4'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'u4', check: { conclusion: 'success', title: expect.stringContaining('approved earlier') } });
   });
 
   it('keeps a flagged hunk flagged on later commits of the PR without asking Jev again', async () => {

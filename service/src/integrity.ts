@@ -213,12 +213,14 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
   if (await carryApproval(env, deps.github, e, fingerprint)) return;
   const all = existingTestHunks(files);
   // A file whose changes the owner approved on an earlier commit of this PR and base, unchanged since (owner, Q48 A).
-  const byFile = await fileHashes(all);
+  // A file with no patch and no head blob sha has nothing to say it is unchanged, so it never carries; a removed one is
+  // known by its base blob.
+  const byFile = await fileHashes(all.filter((h) => h.patch !== null || h.sha || h.status === 'removed'));
   await env.DB.prepare('UPDATE integrity SET test_files = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(JSON.stringify(Object.fromEntries(byFile)), k.repo, k.pr, k.sha).run();
   const approvedFiles = new Map(
     (await env.DB.prepare('SELECT hash, sha, decided_by FROM approved_files WHERE repo = ? AND pr = ? AND base_ref = ?').bind(k.repo, k.pr, e.pull_request.base.ref).all<{ hash: string; sha: string; decided_by: string }>()).results.map((r) => [r.hash, r]),
   );
-  const carried = all.filter((h) => approvedFiles.has(byFile.get(h.file)!));
+  const carried = all.filter((h) => byFile.has(h.file) && approvedFiles.has(byFile.get(h.file)!));
   const hunks = all.filter((h) => !carried.includes(h));
   const sticky = new Set(
     (await env.DB.prepare('SELECT hash FROM flags WHERE repo = ? AND pr = ?').bind(k.repo, k.pr).all<{ hash: string }>()).results.map((r) => r.hash),

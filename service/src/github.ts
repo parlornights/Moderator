@@ -28,6 +28,9 @@ export interface GitHub {
 
 export const CONTEXT = 'test-integrity';
 
+/** Base blobs looked up per GraphQL request. */
+const BLOB_BATCH = 100;
+
 /**
  * Rebuilds a PEM key pasted into a single-line secret field, where its line breaks were dropped, turned into spaces or
  * written as literal `\n`.
@@ -53,8 +56,18 @@ export function github(env: Env): GitHub {
     async compare(installationId, owner, repo, base, head) {
       const octokit = await app.getInstallationOctokit(installationId);
       const { data } = await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', { owner, repo, basehead: `${base}...${head}` });
+      const files: ChangedFile[] = (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch, sha: f.patch ? undefined : (f.sha ?? undefined) }));
+      // A file with no patch is known by its blobs; the one at the merge base (compare is three-dot) says what the PR changed.
+      const noPatch = files.filter((f) => !f.patch);
+      for (let i = 0; i < noPatch.length; i += BLOB_BATCH) {
+        const batch = noPatch.slice(i, i + BLOB_BATCH);
+        const vars = Object.fromEntries(batch.map((f, n) => [`e${n}`, `${data.merge_base_commit.sha}:${f.previousFilename ?? f.filename}`]));
+        const query = `query($owner: String!, $repo: String!, ${batch.map((_, n) => `$e${n}: String!`).join(', ')}) { repository(owner: $owner, name: $repo) { ${batch.map((_, n) => `f${n}: object(expression: $e${n}) { oid }`).join(' ')} } }`;
+        const { repository } = await octokit.graphql<{ repository: Record<string, { oid: string } | null> }>(query, { owner, repo, ...vars });
+        batch.forEach((f, n) => (f.baseSha = repository[`f${n}`]?.oid ?? null));
+      }
       return {
-        files: (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, previousFilename: f.previous_filename, patch: f.patch, sha: f.patch ? undefined : (f.sha ?? undefined) })),
+        files,
         commitDates: data.commits.flatMap((c) => [c.commit.author?.date, c.commit.committer?.date].filter((d): d is string => !!d)),
       };
     },

@@ -27,7 +27,7 @@ describe('existingTestHunks', () => {
       { filename: 'renamed.ts', previousFilename: 'old.spec.ts', status: 'renamed', patch: '@@ -1 +1 @@\n-p\n+q' },
       { filename: 'gone.e2e.ts', status: 'removed', patch: '@@ -1 +0,0 @@\n-it()' },
       { filename: 'big.test.ts', status: 'modified', sha: 'blob1' },
-      { filename: 'new/moved.test.ts', previousFilename: 'moved.test.ts', status: 'renamed', sha: 'blob2' },
+      { filename: 'new/moved.test.ts', previousFilename: 'moved.test.ts', status: 'renamed', sha: 'blob2', baseSha: 'blob2' },
     ]);
     expect(hunks.map((h) => [h.file, h.patch])).toEqual([
       ['a.test.ts', '@@ -1 +1 @@\n-x\n+y'],
@@ -37,7 +37,7 @@ describe('existingTestHunks', () => {
       ['big.test.ts', null],
       ['new/moved.test.ts', null],
     ]);
-    expect(hunks.at(-1)).toEqual({ file: 'new/moved.test.ts', status: 'renamed', patch: null, previousFilename: 'moved.test.ts', sha: 'blob2' });
+    expect(hunks.at(-1)).toEqual({ file: 'new/moved.test.ts', status: 'renamed', patch: null, previousFilename: 'moved.test.ts', sha: 'blob2', baseSha: 'blob2' });
   });
 });
 
@@ -50,6 +50,17 @@ describe('diffHash', () => {
     expect(await diffHash([a, { ...b, patch: '@@ -0,0 +1 @@\n+w' }])).not.toBe(base);
     expect(await diffHash([a])).not.toBe(base);
     expect(await diffHash([{ ...a, status: 'renamed' }, b])).not.toBe(base);
+    // A patched file's fingerprint is as it was before files without a patch carried their merge-base blob.
+    expect(base).toBe('f801d37e8635293217ec653259b01242ef8005b970a7d35cd6b3bf63dd65c1b5');
+  });
+
+  it('tells files without a patch apart by their blob at the merge base too', async () => {
+    const big = { filename: 'big.test.ts', status: 'modified', sha: 'h1', baseSha: 'b1' as string | null };
+    const base = await diffHash([big]);
+    expect(await diffHash([{ ...big }])).toBe(base);
+    expect(await diffHash([{ ...big, baseSha: 'b2' }])).not.toBe(base);
+    expect(await diffHash([{ ...big, baseSha: null }])).not.toBe(base);
+    expect(await diffHash([{ ...big, sha: 'h2' }])).not.toBe(base);
   });
 });
 
@@ -60,13 +71,15 @@ describe('hunkHash', () => {
     expect(await hunkHash({ ...h, patch: '@@ -40 +40 @@\n-x\n+y', sha: 'ignored' })).toBe(await hunkHash(h));
   });
 
-  it('fingerprints a hunk without a patch by its status, previous name, file and blob sha', async () => {
-    const h = { file: 'new/a.test.ts', status: 'renamed', patch: null, previousFilename: 'a.test.ts', sha: 'blob1' };
+  it('fingerprints a hunk without a patch by its status, previous name, file, and blob sha at the head and the merge base', async () => {
+    const h = { file: 'new/a.test.ts', status: 'renamed', patch: null, previousFilename: 'a.test.ts', sha: 'blob1', baseSha: 'blob1' as string | null };
     const base = await hunkHash(h);
     expect(await hunkHash({ ...h })).toBe(base);
     expect(await hunkHash({ ...h, sha: 'blob2' })).not.toBe(base);
     expect(await hunkHash({ ...h, status: 'modified' })).not.toBe(base);
     expect(await hunkHash({ ...h, previousFilename: 'b.test.ts' })).not.toBe(base);
     expect(await hunkHash({ ...h, file: 'new/b.test.ts' })).not.toBe(base);
+    expect(await hunkHash({ ...h, baseSha: 'blob0' })).not.toBe(base);
+    expect(await hunkHash({ ...h, baseSha: null })).not.toBe(base);
   });
 });
