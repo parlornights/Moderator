@@ -258,6 +258,32 @@ describe('decisions belong to one PR and base', () => {
     expect(checks.at(-1)).toMatchObject({ sha: 'q4', check: { conclusion: 'action_required' } });
   });
 
+  it('carries an approval of a test file GitHub sends no patch for while it stays as approved, and asks again when it changes', async () => {
+    // A pure rename: GitHub sends no patch, only the blob sha.
+    const renamed: ChangedFile = { filename: 'infra/session/__tests__/sandbox-net.test.mjs', previousFilename: 'infra/sandbox-net.test.mjs', status: 'renamed', sha: 'blob1' };
+    files = [renamed];
+    await hook(event('n1'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'n1', check: { conclusion: 'action_required', summary: expect.stringContaining('no diff') } });
+    expect(asked).toHaveLength(0);
+    await decide('n1', 'decision=approve');
+
+    // The base branch is merged in and the PR's own diff changes elsewhere: the renamed file is as approved.
+    files = [renamed, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    await hook(event('n2'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'n2', check: { conclusion: 'success', title: expect.stringContaining('1 approved earlier by owner@example.com and unchanged since (infra/session/__tests__/sandbox-net.test.mjs)') } });
+
+    // Its content changes (another blob sha): flagged again.
+    files = [{ ...renamed, sha: 'blob2' }, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    await hook(event('n3'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'n3', check: { conclusion: 'action_required', summary: expect.stringContaining('sandbox-net.test.mjs') } });
+
+    // So does another previous name.
+    files = [{ ...renamed, previousFilename: 'infra/net.test.mjs' }, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    await hook(event('n4'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'n4', check: { conclusion: 'action_required' } });
+    expect(asked).toHaveLength(0);
+  });
+
   it('keeps a flagged hunk flagged on later commits of the PR without asking Jev again', async () => {
     files = [changed];
     answers = { h1: { noul: 0.1 } };

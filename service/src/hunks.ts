@@ -17,8 +17,11 @@ export interface ChangedFile {
 export interface Hunk {
   file: string;
   status: string;
-  /** The hunk as GitHub shows it, or null when GitHub sends no patch (binary or too large). */
+  /** The hunk as GitHub shows it, or null when GitHub sends no patch (a pure rename, binary or too large). */
   patch: string | null;
+  /** Kept on a hunk with no patch, so the file still has a fingerprint. */
+  previousFilename?: string;
+  sha?: string;
 }
 
 /** A unified diff patch split at its `@@` headers. */
@@ -35,12 +38,19 @@ export function splitPatch(patch: string): string[] {
 export function existingTestHunks(files: ChangedFile[]): Hunk[] {
   return files
     .filter((f) => f.status !== 'added' && isTestPath(f.previousFilename ?? f.filename))
-    .flatMap((f): Hunk[] => (f.patch ? splitPatch(f.patch).map((patch) => ({ file: f.filename, status: f.status, patch })) : [{ file: f.filename, status: f.status, patch: null }]));
+    .flatMap((f): Hunk[] =>
+      f.patch
+        ? splitPatch(f.patch).map((patch) => ({ file: f.filename, status: f.status, patch }))
+        : [{ file: f.filename, status: f.status, patch: null, previousFilename: f.previousFilename, sha: f.sha }],
+    );
 }
 
-/** Identifies a hunk by its file and changed lines, not its line numbers, so it is recognised on a later commit. */
+/**
+ * Identifies a hunk by its file and changed lines, not its line numbers, so it is recognised on a later commit. A hunk
+ * GitHub sends no patch for is identified by its status, previous name and blob sha instead.
+ */
 export async function hunkHash(h: Hunk): Promise<string> {
-  const body = (h.patch ?? '').split('\n').filter((l) => !l.startsWith('@@')).join('\n');
+  const body = h.patch === null ? `${h.status} ${h.previousFilename ?? ''} ${h.file} ${h.sha ?? ''}` : h.patch.split('\n').filter((l) => !l.startsWith('@@')).join('\n');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${h.file}\n${body}`));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
