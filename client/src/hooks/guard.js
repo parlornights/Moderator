@@ -1,6 +1,7 @@
 // PreToolUse. Refuses the few things no agent may do, whatever its prompt says:
-//   Bash:        a push to main or master by any agent (a branch and a pull request instead); a force push (except
-//                --force-with-lease); rm -rf at or above the repository; a unit checking out main; a unit's pure wait
+//   Bash:        a push to main or master by any agent (a branch and a pull request instead, or moderator push-main
+//                for harness-only changes); a force push (except --force-with-lease); rm -rf at or above the
+//                repository; a unit checking out main; a unit's pure wait
 //                (sleep, polling loop) once its measured waiting passed WAIT_CAP_SEC, so it hands back BLOCKED; a
 //                subagent's pattern kill (pkill, killall), which can stop other agents' processes in a shared sandbox.
 //   Edit/Write:  a subagent touching the repo's protectedPaths (the main session owns those).
@@ -25,7 +26,7 @@ function pushRefusal(s) {
     return 'force push is not allowed; use --force-with-lease if you must, or rebase';
   }
   const toMain = refspecs.some((w) => /(^|:)(refs\/heads\/)?(main|master)$/.test(w));
-  return toMain ? 'no agent pushes to main: push a branch and open a pull request' : null;
+  return toMain ? 'no agent pushes to main: push a branch and open a pull request; harness-only changes: moderator push-main' : null;
 }
 
 /**

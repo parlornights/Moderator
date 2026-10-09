@@ -26,6 +26,7 @@ test('no agent pushes to main, in any refspec form; a task branch push is untouc
     assert.match(await bash(cmd), /no agent pushes to main/, cmd);
   }
   assert.match(await bash('git push origin HEAD:main', 'unit'), /no agent pushes to main/);
+  assert.match(await bash('git push origin HEAD:main'), /push a branch and open a pull request; harness-only changes: moderator push-main$/);
   assert.equal(await bash('git push -u origin claude/cd-1-x'), 'allowed');
   assert.equal(await bash('git push origin claude/main-menu'), 'allowed');
 });

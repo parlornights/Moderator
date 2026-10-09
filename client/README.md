@@ -42,7 +42,7 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 | Hook | Does |
 |---|---|
 | `session-start` | Prints the role (`role.md`), the orient block (which names the handoff note by path), and the lines that send the agent to the issue on Linear, the repo's start docs and the papercut log. After a compaction it first refreshes the note's auto block. |
-| `guard` | Refuses a push to main or master, a force push, `rm -rf` at or above the repository, a unit checking out main, a unit waiting past 20 minutes in total, and a subagent editing `protectedPaths`. |
+| `guard` | Refuses a push to main or master by any agent (`moderator push-main` takes harness-only changes there), a force push, `rm -rf` at or above the repository, a unit checking out main, a unit waiting past 20 minutes in total, and a subagent editing `protectedPaths`. |
 | `post-edit` | Runs `lintOnEdit` on the edited file; a failure reaches the agent at once. |
 | `post-artifact` | Records a published Artifact URL; the Stop hook holds the turn until the note ties it to an issue. |
 | `context-watch` | Past the hand-over share of the context window, tells the session once to write the handoff note and stop. |
@@ -92,12 +92,20 @@ unit agents preload. List `.claude/**` in `protectedPaths` so no subagent edits 
 ## Commands
 
 `moderator help` lists them: `scope`, `gate`, `risk`, `pick`, `handback`, `handoff`, `orient`, `papercut`,
-`unit-watch`, `sync`, and `linear issue | update | comment`.
+`unit-watch`, `sync`, `linear issue | update | comment`, `push-main` and `user-hooks`.
 
 A Linear write goes through the service, which asks Jev whether it is a product-level write. When Jev refuses or
 does not answer, nothing is written and the command exits 3; the agent then uses the Linear connector's own tool,
 whose write tools prompt the owner. The same request on the same day carries the same id, so running a command twice
 files once.
+
+`moderator push-main` takes a commit that changes only the agent tooling (`directToMain`) to the default branch
+without a pull request. It refuses a dirty tree, fetches the default branch and refuses unless `origin/main` is an
+ancestor of `HEAD` (merge it first), pushes `HEAD` to `harness/<short sha>` (never forced) and calls Moderator with
+the repo named by the origin remote. Moderator reads `directToMain` from the default branch's own config, so widening
+it needs a pull request; it refuses any changed or renamed-from path outside it, and anything that is not a
+fast-forward, then moves the branch as its GitHub App, never forced, and deletes the scratch branch. A refusal prints
+its reason and the paths, and exits 1. No agent pushes to main itself: the guard refuses it.
 
 ## moderator.config.json
 
@@ -118,6 +126,7 @@ files once.
   "rules": [{ "name": "bot balance", "match": ["packages/game/**"], "checks": ["balance"] }],
   "risk": { "highPaths": ["**/migrations/**", "infra/**"], "linesHigh": 400, "filesHigh": 15, "srcLinesNeedingTests": 30 },
   "protectedPaths": [".claude/**", "moderator.config.json", "docs/papercuts.md"],
+  "directToMain": [".claude/", "CLAUDE.md", "docs/papercuts.md"],
   "papercuts": "docs/papercuts.md",
   "readAtStart": [{ "path": "docs/TESTING.md", "why": "how every test here is written" }],
   "context": { "window": 1000000, "handoffShare": 0.7 }
@@ -128,7 +137,8 @@ Only `issuePattern` is required. A check runs `when` lintable files changed (`fi
 (`packages`), a rule names it (`rule`), or `always`. In `cmd`, `{files}` is the changed lintable files and
 `{filters}` is pnpm's `-r` for a global change, else `--filter "...<package>"` per changed package. `risk` decides
 the reviewer: a high path or a large diff asks for opus, and Jev may raise it, never lower it. Jev's own thresholds
-live in the service.
+live in the service. `directToMain` lists the paths `moderator push-main` may take to the default branch; an entry
+ending in `/` is a folder, any other entry one file.
 
 ## Develop
 

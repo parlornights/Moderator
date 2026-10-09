@@ -1,4 +1,4 @@
-// The Moderator service: Jev checks and Linear writes. The service holds every key; a session holds only
+// The Moderator service: Jev checks, Linear writes and harness pushes. The service holds every key; a session holds only
 // MODERATOR_API_KEY. Its URL is moderatorUrl in moderator.config.json.
 
 import crypto from 'node:crypto';
@@ -22,7 +22,8 @@ async function request(method, route, body) {
     signal: AbortSignal.timeout(30_000),
   });
   const data = /** @type {any} */ (await res.json().catch(() => null));
-  if (!res.ok) throw new Error(`Moderator ${method} ${route}: ${res.status}${data?.error ? ` ${data.error}` : ''}`);
+  // A refusal is an answer the caller prints, whatever its status.
+  if (!res.ok && data?.outcome !== 'refused') throw new Error(`Moderator ${method} ${route}: ${res.status}${data?.error ? ` ${data.error}` : ''}`);
   return data;
 }
 
@@ -80,4 +81,13 @@ export const linear = {
    * @returns {Promise<LinearOutcome>}
    */
   comment: (issue, body) => request('POST', '/tool/linear/comment', { id: requestId({ issue, body }), issue, body }),
+};
+
+export const harness = {
+  /**
+   * Asks Moderator to move the default branch to `sha`, a harness-only fast-forward already pushed to `branch`.
+   * @param {{ repo: string, sha: string, branch: string }} body
+   * @returns {Promise<{ outcome: 'done', branch: string, sha: string, paths: string[] } | { outcome: 'refused', reason: string, paths?: string[] }>}
+   */
+  push: (body) => request('POST', '/tool/harness/push', body),
 };

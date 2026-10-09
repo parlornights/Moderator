@@ -13,6 +13,7 @@ import { accessEmail, type Verify } from './access';
 import * as audit from './audit';
 import type { Env } from './env';
 import { appManifest, convertManifest, github, type GitHub } from './github';
+import { branches, pushBody, pushHarness, type Branches } from './harness';
 import * as integrity from './integrity';
 import { askJev, checks, runCheck, type Ask, type CheckName } from './jev';
 import { linear, NotFound, type Linear } from './linear';
@@ -24,6 +25,8 @@ export interface Deps {
   github(env: Env): GitHub;
   access(env: Env): Verify;
   convertManifest(code: string): ReturnType<typeof convertManifest>;
+  /** Optional, so a test that does not move branches needs no fake. */
+  branches?(env: Env): Branches;
 }
 
 export const realDeps: Deps = {
@@ -32,6 +35,7 @@ export const realDeps: Deps = {
   github,
   access: accessEmail,
   convertManifest: (code) => convertManifest(code),
+  branches,
 };
 
 const PR_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']);
@@ -193,6 +197,32 @@ export function createApp(deps: Deps = realDeps) {
     const i = c.req.valid('json');
     return c.json(await gatedWrite(c.env, 'linear/comment', i, { check: 'linear-comment', text: { body: i.body } }, () => deps.linear(c.env).comment(i.issue, i.body, i.id)));
   });
+
+  app.post(
+    '/tool/harness/push',
+    tool(
+      'Move the default branch to a harness-only commit',
+      'Body `{repo: "owner/name", sha, branch?}`: `sha` is pushed to the scratch branch `branch` (usually `harness/<short sha>`). The default branch\'s own `moderator.config.json` lists `directToMain` paths (an entry ending in `/` is a folder). ' +
+        'Answers 200 `{outcome: "done", branch, sha, paths}` once Moderator\'s GitHub App moved the default branch to `sha` without forcing it; the scratch branch is then deleted. ' +
+        'Otherwise `{outcome: "refused", reason, paths?}` and nothing moves: 403 when the default branch\'s config lists no `directToMain`, or when a changed or renamed-from path is outside it (`paths` lists them; those need a pull request); ' +
+        '404 when the App is not installed on the repo; 409 when `sha` is not a fast-forward of the default branch, is already its tip, or the branch moved meanwhile (merge it and push again); ' +
+        '422 when the scratch branch is the default branch, or GitHub did not list every changed file. 501 when the service cannot move branches; 502 when GitHub fails. Every call is in the audit log.',
+    ),
+    valid('json', pushBody),
+    async (c) => {
+      if (!deps.branches) return c.json({ error: 'this service cannot move branches' }, 501);
+      const input = c.req.valid('json');
+      let r;
+      try {
+        r = await pushHarness(deps.branches(c.env), input);
+      } catch (e) {
+        await audit.record(c.env.DB, { action: 'harness/push', input, outcome: 'error', response: { error: String(e) } });
+        throw e;
+      }
+      await audit.record(c.env.DB, { action: 'harness/push', input, outcome: r.body.outcome, response: r.body });
+      return c.json(r.body, r.status);
+    },
+  );
 
   app.get('/audit', tool('The audit log', 'Every tool call, webhook run and approval, newest first. Page back with `before=<id>`.'), valid('query', z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), before: z.coerce.number().int().optional() })), async (c) => {
     const q = c.req.valid('query');
