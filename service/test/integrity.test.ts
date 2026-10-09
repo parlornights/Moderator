@@ -61,6 +61,7 @@ const changed: ChangedFile = { filename: 'src/__tests__/score.test.ts', status: 
 beforeEach(async () => {
   // Approvals carry across a PR's commits, so each test starts from an empty record.
   await env.DB.exec('DELETE FROM flags');
+  await env.DB.exec('DELETE FROM approved_files');
   await env.DB.exec('DELETE FROM integrity');
   answers = null;
   asked = [];
@@ -216,15 +217,45 @@ describe('decisions belong to one PR and base', () => {
     expect(checks.at(-1)).toMatchObject({ sha: 'm2', check: { conclusion: 'success', title: 'Approved by owner@example.com', summary: expect.stringContaining('Carried from m1') } });
     expect(asked).toHaveLength(1);
 
-    // The agent then changes its own diff: a new decision is needed.
+    // The agent then changes another file of its own diff: the approved test file is as it was, so it stays approved
+    // (owner, Q48 A); the whole-diff carry no longer applies.
     files = [changed, { filename: 'src/app.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
     await hook(event('m3'));
-    expect(checks.at(-1)).toMatchObject({ sha: 'm3', check: { conclusion: 'action_required' } });
+    expect(checks.at(-1)).toMatchObject({ sha: 'm3', check: { conclusion: 'success', title: expect.stringContaining('approved earlier') } });
 
     // Not carried to another base branch either.
     files = [changed];
     await hook(event('m4', 'synchronize', 1, 'release'));
     expect(checks.at(-1)).toMatchObject({ sha: 'm4', check: { conclusion: 'action_required' } });
+  });
+
+  it('carries an approval for each test file left exactly as approved, while other files of the PR change (owner, Q48 A)', async () => {
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    const sanctioned: ChangedFile = { filename: 'src/names.test.ts', status: 'modified', patch: '@@ -9 +9 @@\n-  expect(valid(a24)).toBe(true);\n+  expect(valid(a32)).toBe(true);' };
+    files = [changed, other, sanctioned];
+    answers = { h1: { noul: 0.1 }, h2: { noul: 0.2 }, h3: { noul: 0.9 } };
+    await hook(event('q1'));
+    await decide('q1', 'decision=approve');
+
+    // A commit that adds baseline images: the approved test files are as they were, so the owner is not asked again.
+    files = [changed, other, sanctioned, { filename: 'e2e/baseline/home.png', status: 'added', sha: 'blob1' }];
+    answers = { h1: { noul: 0.9 } };
+    await hook(event('q2'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'q2', check: { conclusion: 'success', title: expect.stringContaining('2 approved earlier by owner@example.com and unchanged since') } });
+    expect(asked.at(-1)?.state.hunks.map((h: { file: string }) => h.file)).toEqual(['src/names.test.ts']);
+
+    // One approved file changes again: it is asked again; the untouched one stays approved.
+    files = [{ ...changed, patch: '@@ -1 +1 @@\n-  expect(total).toBe(120);\n+  expect(total).toBeDefined();' }, other, sanctioned];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('q3'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'q3', check: { conclusion: 'action_required' } });
+    expect(checks.at(-1)?.check.summary).toContain('score.test.ts');
+    expect(checks.at(-1)?.check.summary).not.toContain('rules.spec.ts');
+
+    // Not on another base branch.
+    files = [changed, other, sanctioned];
+    await hook(event('q4', 'synchronize', 3, 'release'));
+    expect(checks.at(-1)).toMatchObject({ sha: 'q4', check: { conclusion: 'action_required' } });
   });
 
   it('keeps a flagged hunk flagged on later commits of the PR without asking Jev again', async () => {
@@ -295,8 +326,8 @@ describe('approval page', () => {
     expect(checks.at(-1)?.check).toMatchObject({ conclusion: 'success', title: 'Approved by owner@example.com' });
     expect(asked).toHaveLength(1);
 
-    // A new commit that changes the PR's own diff needs a new decision.
-    files = [changed, { filename: 'src/x.ts', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+    // A new commit that changes the approved test file needs a new decision.
+    files = [{ ...changed, patch: '@@ -1 +1 @@\n-  expect(total).toBe(120);\n+  expect(total).toBeTruthy();' }];
     await hook(event('b2'));
     expect(checks.at(-1)).toMatchObject({ sha: 'b2', check: { conclusion: 'action_required' } });
   });
@@ -307,6 +338,7 @@ describe('approval page', () => {
     await hook(event('race'));
     // The owner approves while a second run (say, a redelivered webhook) is still reading the ticket.
     await env.DB.exec('DELETE FROM flags');
+  await env.DB.exec('DELETE FROM approved_files');
     linear.ticketBefore.mockImplementation(async () => {
       await decide('race', 'decision=approve');
       return null;
