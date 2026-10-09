@@ -28,7 +28,8 @@ export function toolUses(transcriptPath) {
 
 /**
  * Tokens the main session last sent as context (input + cache read + cache creation of its latest usage). Reads
- * only the file's tail, widening it until a usage turns up. Null when unknown.
+ * only the file's tail, widening it until a usage turns up. Null when unknown, which includes right after a
+ * compaction: until the first post-compaction turn reports its usage, the last one before it says nothing.
  * @param {string} transcriptPath
  */
 export function contextTokens(transcriptPath) {
@@ -42,7 +43,8 @@ export function contextTokens(transcriptPath) {
 /**
  * @param {string} transcriptPath
  * @param {number} tailBytes
- * @returns {number | null | undefined} undefined: none in this tail; null: unreadable, or none in the whole file
+ * @returns {number | null | undefined} undefined: none in this tail; null: unreadable, a main-session compaction
+ *   newer than every usage, or none in the whole file
  */
 function lastUsage(transcriptPath, tailBytes) {
   let text;
@@ -61,6 +63,10 @@ function lastUsage(transcriptPath, tailBytes) {
   }
   const lines = text.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].includes('"compact_boundary"')) {
+      const rec = parse(lines[i]);
+      if (rec?.type === 'system' && rec.subtype === 'compact_boundary' && !rec.isSidechain) return null;
+    }
     if (!lines[i].includes('"usage"')) continue;
     const rec = parse(lines[i]);
     const u = rec?.isSidechain ? null : rec?.message?.usage;

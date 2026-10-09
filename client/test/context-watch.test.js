@@ -25,6 +25,17 @@ test('the context is the latest main-session usage; a unit (sidechain) turn does
   assert.equal(contextTokens(transcript(r.scratch, [turn(555_000), { type: 'user', message: { content: 'x'.repeat(200 * 1024) } }])), 555_000);
 });
 
+test('right after a compaction the context is unknown until a post-compaction usage turns up; a sidechain boundary does not count', async () => {
+  const { r } = setup();
+  const boundary = (extra = {}) => ({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', ...extra });
+  assert.equal(contextTokens(transcript(r.scratch, [turn(780_000), boundary(), { type: 'user', message: { content: 'x'.repeat(200 * 1024) } }])), null);
+  assert.equal(contextTokens(transcript(r.scratch, [turn(780_000), boundary(), turn(80_000)])), 80_000);
+  assert.equal(contextTokens(transcript(r.scratch, [turn(780_000), boundary({ isSidechain: true })])), 780_000);
+  const t = transcript(r.scratch, [turn(780_000), boundary(), toolUse('Bash', {})]);
+  assert.equal((await hook('context-watch', { transcript_path: t, session_id: 's1' }, { cwd: r.dir })).stdout, '');
+  assert.equal(fs.existsSync(`${r.dir}/.work/CD-5/events.jsonl`), false);
+});
+
 test('below the share it says nothing; past it once per level, firmer at 85 %', async () => {
   const { watch } = setup();
   assert.equal(await watch(690_000), '');
