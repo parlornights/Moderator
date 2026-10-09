@@ -1,10 +1,15 @@
-// The CLI: Linear writes and Jev's pick through the service, the lint after an edit, and help.
+// The CLI: Linear writes, Jev's pick and push-main through the service, the lint after an edit, and help.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { after, test } from 'node:test';
 
 import { CONFIG, cli, fakeModerator, hook, repo } from './helpers.js';
 
 const { requestId } = await import('../src/api.js');
+const { repoOf } = await import('../src/pushmain.js');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -100,7 +105,7 @@ test('lint after an edit: a failure is shown to the agent at once (exit 2); othe
 
 test('help lists the commands; an unknown command is an error; a hook bug never stops the session', async () => {
   const r = repo();
-  assert.match((await cli(['help'], { cwd: r.dir })).stdout, /moderator <command>[\s\S]*linear comment/);
+  assert.match((await cli(['help'], { cwd: r.dir })).stdout, /moderator <command>[\s\S]*linear comment[\s\S]*push-main/);
   assert.equal((await cli(['nope'], { cwd: r.dir })).status, 1);
   r.put('moderator.config.json', '{ broken');
   const out = await hook('session-start', { source: 'startup' }, { cwd: r.dir });
@@ -109,4 +114,83 @@ test('help lists the commands; an unknown command is an error; a hook bug never 
   assert.match(out.json.systemMessage, /^moderator hook session-start failed: moderator\.config\.json: /, 'the user sees it: the protocol is off');
   const everyCall = await hook('context-watch', { tool_name: 'Bash' }, { cwd: r.dir });
   assert.deepEqual([everyCall.status, everyCall.json], [0, null], 'a hook on every tool call does not repeat it');
+});
+
+test('owner/name comes from any form of the origin URL', () => {
+  for (const url of ['https://github.com/parlornights/crooked-duke.git', 'https://github.com/parlornights/crooked-duke', 'git@github.com:parlornights/crooked-duke.git', 'ssh://git@github.com/parlornights/crooked-duke.git', 'http://local_proxy@127.0.0.1:41537/git/parlornights/crooked-duke']) {
+    assert.equal(repoOf(url), 'parlornights/crooked-duke', url);
+  }
+  assert.equal(repoOf('nope'), null);
+});
+
+/**
+ * A repo on main whose origin is a bare repository at <tmp>/owner/name.git, and a fake Moderator.
+ * @param {(route: string, body: any) => unknown} answer
+ * @param {{ status?: number }} [opts]
+ */
+async function withOrigin(answer, opts) {
+  const moderator = await fakeModerator(answer, opts);
+  const r = repo({ branch: 'main', config: { ...CONFIG, moderatorUrl: moderator.url, directToMain: ['.claude/', 'CLAUDE.md'] } });
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'moderator-origin-'));
+  after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const bare = path.join(parent, 'parlornights', 'crooked-duke.git');
+  fs.mkdirSync(bare, { recursive: true });
+  const remote = (/** @type {string[]} */ ...args) => execFileSync('git', args, { cwd: bare, encoding: 'utf8' }).trim();
+  remote('init', '-q', '--bare');
+  remote('symbolic-ref', 'HEAD', 'refs/heads/main');
+  r.git('remote', 'add', 'origin', bare);
+  r.git('push', '-q', 'origin', 'main');
+  r.git('checkout', '-qb', 'harness-work');
+  return { r, moderator, remote, run: () => cli(['push-main'], { cwd: r.dir }) };
+}
+
+test('a clean commit on top of origin/main goes to harness/<short sha> and Moderator moves main', async () => {
+  const { r, moderator, remote, run } = await withOrigin((_route, body) => ({ outcome: 'done', branch: 'main', sha: body.sha, paths: ['CLAUDE.md'] }));
+  r.put('CLAUDE.md', 'rules');
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'rules');
+  const sha = r.git('rev-parse', 'HEAD');
+  const short = r.git('rev-parse', '--short', 'HEAD');
+  const out = await run();
+  assert.equal(out.status, 0, out.stdout + out.stderr);
+  assert.equal(out.stdout, `done: main is now ${sha.slice(0, 7)}\n  CLAUDE.md\n`);
+  assert.equal(remote('rev-parse', `refs/heads/harness/${short}`), sha);
+  assert.equal(moderator.calls.length, 1);
+  assert.equal(moderator.calls[0].route, 'POST /tool/harness/push');
+  assert.equal(moderator.calls[0].auth, 'Bearer test-key');
+  assert.deepEqual(moderator.calls[0].body, { repo: 'parlornights/crooked-duke', sha, branch: `harness/${short}` });
+});
+
+test("a refusal prints its reason and paths and exits 1", async () => {
+  const { r, run } = await withOrigin(() => ({ outcome: 'refused', reason: "outside main's directToMain paths: these need a pull request", paths: ['src/app.ts'] }), { status: 403 });
+  r.put('src/app.ts', 'x');
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'app');
+  const out = await run();
+  assert.equal(out.status, 1);
+  assert.equal(out.stdout, "refused: outside main's directToMain paths: these need a pull request\n  src/app.ts\n");
+});
+
+test('a dirty tree, or a commit that does not contain origin/main, is refused before anything is pushed', async () => {
+  const { r, moderator, remote, run } = await withOrigin(() => ({ outcome: 'done', branch: 'main', sha: 'x', paths: [] }));
+  r.put('CLAUDE.md', 'rules');
+  const dirty = await run();
+  assert.equal(dirty.status, 1);
+  assert.match(dirty.stdout, /working tree is not clean/);
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'rules');
+
+  // main moves on origin: the commit is no longer a fast-forward of it.
+  r.git('checkout', '-q', 'main');
+  r.put('other.md', 'x');
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'other');
+  r.git('push', '-q', 'origin', 'main');
+  r.git('reset', '-q', '--hard', 'HEAD~1');
+  r.git('checkout', '-q', 'harness-work');
+  const behind = await run();
+  assert.equal(behind.status, 1);
+  assert.match(behind.stdout, /HEAD does not contain origin\/main: merge origin\/main first/);
+  assert.equal(remote('for-each-ref', 'refs/heads/harness'), '');
+  assert.equal(moderator.calls.length, 0);
 });
