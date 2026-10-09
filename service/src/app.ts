@@ -202,10 +202,10 @@ export function createApp(deps: Deps = realDeps) {
     '/tool/harness/push',
     tool(
       'Move the default branch to a harness-only commit',
-      'Body `{repo: "owner/name", sha, branch?}`: `sha` is pushed to the scratch branch `branch` (usually `harness/<short sha>`). The default branch\'s own `moderator.config.json` lists `directToMain` paths (an entry ending in `/` is a folder). ' +
-        'Answers 200 `{outcome: "done", branch, sha, paths}` once Moderator\'s GitHub App moved the default branch to `sha` without forcing it; the scratch branch is then deleted. ' +
-        'Otherwise `{outcome: "refused", reason, paths?}` and nothing moves: 403 when the default branch\'s config lists no `directToMain`, or when a changed or renamed-from path is outside it (`paths` lists them; those need a pull request); ' +
-        '404 when the App is not installed on the repo; 409 when `sha` is not a fast-forward of the default branch, is already its tip, or the branch moved meanwhile (merge it and push again); ' +
+      'Body `{repo: "owner/name", sha, branch?}`: `sha` is pushed to the scratch branch `branch`, `harness/<short sha>`. The default branch\'s own `moderator.config.json` lists `directToMain` paths (an entry ending in `/` is a folder). ' +
+        'Answers 200 `{outcome: "done", branch, sha, paths}` once Moderator\'s GitHub App moved the default branch to `sha` without forcing it, or when it is already there (`paths` empty); the scratch branch is then deleted while it still points at `sha`. ' +
+        'Otherwise `{outcome: "refused", reason, paths?}` and nothing moves: 403 when the default branch\'s config is not valid JSON or lists no `directToMain`, when a changed or renamed-from path is outside it (`paths` lists them; those need a pull request, as does the config itself), or when a branch protection or ruleset refuses the App; ' +
+        '404 when the App is not installed on the repo; 409 when `sha` is not a fast-forward of the default branch, or the branch moved meanwhile (merge it and push again); ' +
         '422 when the scratch branch is the default branch, or GitHub did not list every changed file. 501 when the service cannot move branches; 502 when GitHub fails. Every call is in the audit log.',
     ),
     valid('json', pushBody),
@@ -219,7 +219,12 @@ export function createApp(deps: Deps = realDeps) {
         await audit.record(c.env.DB, { action: 'harness/push', input, outcome: 'error', response: { error: String(e) } });
         throw e;
       }
-      await audit.record(c.env.DB, { action: 'harness/push', input, outcome: r.body.outcome, response: r.body });
+      try {
+        await audit.record(c.env.DB, { action: 'harness/push', input, outcome: r.body.outcome, response: r.body });
+      } catch (e) {
+        // The branch may already have moved; a 502 here would tell the caller it did not.
+        console.error('audit insert failed', 'harness/push', e);
+      }
       return c.json(r.body, r.status);
     },
   );

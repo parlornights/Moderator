@@ -42,7 +42,7 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 | Hook | Does |
 |---|---|
 | `session-start` | Prints the role (`role.md`), the orient block (which names the handoff note by path), and the lines that send the agent to the issue on Linear, the repo's start docs and the papercut log. After a compaction it first refreshes the note's auto block. |
-| `guard` | Refuses a push to main or master by any agent (`moderator push-main` takes harness-only changes there), a force push, `rm -rf` at or above the repository, a unit checking out main, a unit waiting past 20 minutes in total, and a subagent editing `protectedPaths`. |
+| `guard` | Refuses a push to main or master by any agent (`moderator push-main`, run by the main session only, takes harness-only changes there), a force push, `rm -rf` at or above the repository, a unit checking out main, a unit waiting past 20 minutes in total, and a subagent editing `protectedPaths`. |
 | `post-edit` | Runs `lintOnEdit` on the edited file; a failure reaches the agent at once. |
 | `post-artifact` | Records a published Artifact URL; the Stop hook holds the turn until the note ties it to an issue. |
 | `context-watch` | Past the hand-over share of the context window, tells the session once to write the handoff note and stop. |
@@ -105,7 +105,9 @@ ancestor of `HEAD` (merge it first), pushes `HEAD` to `harness/<short sha>` (nev
 the repo named by the origin remote. Moderator reads `directToMain` from the default branch's own config, so widening
 it needs a pull request; it refuses any changed or renamed-from path outside it, and anything that is not a
 fast-forward, then moves the branch as its GitHub App, never forced, and deletes the scratch branch. A refusal prints
-its reason and the paths, and exits 1. No agent pushes to main itself: the guard refuses it.
+its reason and the paths, and exits 1. No agent pushes to main itself, and only the main session runs `push-main`: the
+guard refuses both. `moderator.config.json` itself never goes this way, whatever `directToMain` lists. The App must be a
+bypass actor on the default branch's protection or ruleset, or GitHub refuses the move and the command prints why.
 
 ## moderator.config.json
 

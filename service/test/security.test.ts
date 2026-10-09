@@ -98,12 +98,41 @@ describe('github (real Octokit)', () => {
     expect(await b.file(9, 'o', 'r', 'moderator.config.json', 'tip1')).toBe('{"directToMain":[".claude/"]}');
     expect(sent.at(-1)).toMatchObject({ method: 'GET', url: '/repos/o/r/contents/moderator.config.json?ref=tip1', accept: 'application/vnd.github.raw+json' });
     expect(await b.compare(9, 'o', 'r', 'tip1', 'h1')).toEqual({ status: 'ahead', paths: ['.claude/a.md', '.claude/b.md', 'src/b.md'], complete: true });
-    expect(sent.at(-1)?.url).toBe('/repos/o/r/compare/tip1...h1?per_page=300');
-    expect(await b.move(9, 'o', 'r', 'main', 'h1')).toBe(true);
+    expect(sent.at(-1)?.url).toBe('/repos/o/r/compare/tip1...h1?per_page=100');
+    expect(await b.head(9, 'o', 'r', 'main')).toBe('tip1');
+    expect(await b.move(9, 'o', 'r', 'main', 'h1')).toBe('done');
     expect(sent.at(-1)).toMatchObject({ method: 'PATCH', body: { sha: 'h1', force: false } });
     expect(sent.at(-1)?.url).toMatch(/^\/repos\/o\/r\/git\/refs\/heads(\/|%2F)main$/);
     await b.remove(9, 'o', 'r', 'harness/h1');
     expect(sent.at(-1)?.method).toBe('DELETE');
     expect(sent.at(-1)?.url).toMatch(/^\/repos\/o\/r\/git\/refs\/heads(\/|%2F)harness(\/|%2F)h1$/);
+  });
+  it('fails closed on a file listing GitHub cut at 300 or left out, and tells a moved branch from a protection', async () => {
+    const b = branches({ ...env, GITHUB_APP_ID: '1', GITHUB_PRIVATE_KEY: pem, GITHUB_WEBHOOK_SECRET: 'whsec' });
+    let compare: unknown;
+    let patch: Response;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith('/access_tokens')) return Response.json({ token: 't', expires_at: new Date(Date.now() + 3_600_000).toISOString() }, { status: 201 });
+      if (url.pathname.includes('/compare/')) return Response.json(compare);
+      if (init?.method === 'PATCH') return patch.clone();
+      return new Response(null, { status: 404 });
+    });
+    compare = { status: 'ahead', files: Array.from({ length: 300 }, (_, i) => ({ filename: `.claude/f${i}.md` })) };
+    expect((await b.compare(9, 'o', 'r', 'b', 'h')).complete).toBe(false);
+    compare = { status: 'ahead' };
+    expect(await b.compare(9, 'o', 'r', 'b', 'h')).toEqual({ status: 'ahead', paths: [], complete: false });
+    compare = { status: 'ahead', files: [] };
+    expect((await b.compare(9, 'o', 'r', 'b', 'h')).complete).toBe(false);
+    compare = { status: 'ahead', files: Array.from({ length: 299 }, (_, i) => ({ filename: `.claude/f${i}.md` })) };
+    expect((await b.compare(9, 'o', 'r', 'b', 'h')).complete).toBe(true);
+
+    patch = Response.json({ message: 'Update is not a fast forward' }, { status: 422 });
+    expect(await b.move(9, 'o', 'r', 'main', 'h')).toBe('moved');
+    patch = Response.json({ message: 'Protected branch update failed for refs/heads/main.' }, { status: 422 });
+    expect(await b.move(9, 'o', 'r', 'main', 'h')).toEqual({ refused: 'Protected branch update failed for refs/heads/main.' });
+    patch = Response.json({ message: 'Repository rule violations found' }, { status: 422 });
+    expect(await b.move(9, 'o', 'r', 'main', 'h')).toEqual({ refused: 'Repository rule violations found' });
+    expect(await b.head(9, 'o', 'r', 'harness/abc1234')).toBeNull();
   });
 });

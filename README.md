@@ -19,7 +19,7 @@ Every request sends `Authorization: Bearer <key>`, where `<key>` is one of the c
 | `POST /tool/linear/issue` | `{id?, team, title, description, project?, parent?}`; `id` is an optional client UUID that makes a retry safe. Jev checks it is a product task with what done looks like. |
 | `PATCH /tool/linear/issue/:id` | `{title?, description?, status?, priority?, addLabels?, removeLabels?, links?}`. Jev checks only changed title or description. |
 | `POST /tool/linear/comment` | `{id?, issue, body}`. Jev checks it is a settled product update. |
-| `POST /tool/harness/push` | `{repo: "owner/name", sha, branch?}`. Moves the default branch to `sha` as Moderator's GitHub App, never forced, when `sha` is a fast-forward of it and every changed or renamed-from path is in `directToMain` of the default branch's own `moderator.config.json`; then deletes the scratch branch `branch`. Answers `{outcome: "done", branch, sha, paths}`, or `{outcome: "refused", reason, paths?}` with 403 (a path outside, listed; no `directToMain`), 404 (App not installed), 409 (not a fast-forward, or the branch moved meanwhile) or 422. `moderator push-main` calls it. |
+| `POST /tool/harness/push` | `{repo: "owner/name", sha, branch?}`. Moves the default branch to `sha` as Moderator's GitHub App, never forced, when `sha` is a fast-forward of it and every changed or renamed-from path is in `directToMain` of the default branch's own `moderator.config.json`; then deletes the scratch branch `branch` (`harness/<short sha>`) while it still points at `sha`. `moderator.config.json` itself always needs a PR. Answers `{outcome: "done", branch, sha, paths}` (also when the branch is already at `sha`), or `{outcome: "refused", reason, paths?}` with 403 (a path outside, listed; no or invalid config; a branch protection or ruleset refused the App), 404 (App not installed), 409 (not a fast-forward, or the branch moved meanwhile) or 422. `moderator push-main` calls it. |
 | `GET /audit?limit=&before=` | The audit log, newest first. |
 
 ## test-integrity
@@ -44,7 +44,7 @@ posts the reason on the PR). A new push runs the check again.
 
 The owner pages (`/approve/*`, `/github/setup`, `/github/created`) sit behind Cloudflare Access (application "Moderator
 owner pages"), and the Worker checks the Access token itself. `/github/setup` creates the App from a manifest in one click. The App needs
-`contents: write` for `/tool/harness/push`; on an App created before, the owner raises it in the App's GitHub settings and accepts it on the installation.
+`contents: write` for `/tool/harness/push`; on an App created before, the owner raises it in the App's GitHub settings and accepts it on the installation. The App must also be a bypass actor on the default branch's protection or ruleset; otherwise GitHub refuses the move and the endpoint answers 403 with GitHub's message.
 
 A Linear write answers `{outcome: "done", id, url}`, or `{outcome: "ask_owner", reason: "jev_refused" \| "jev_down"}`
 and writes nothing; the agent then uses the Linear connector, whose write tools prompt the owner.

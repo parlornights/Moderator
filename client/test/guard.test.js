@@ -31,6 +31,15 @@ test('no agent pushes to main, in any refspec form; a task branch push is untouc
   assert.equal(await bash('git push origin claude/main-menu'), 'allowed');
 });
 
+test('only the main session runs moderator push-main, however it is started', async () => {
+  const forms = ['moderator push-main', 'npx moderator push-main', 'pnpm exec moderator push-main', 'pnpm moderator push-main', 'npm exec -- moderator push-main', 'node node_modules/@parlornights/moderator/bin/moderator.js push-main', './node_modules/.bin/moderator push-main', 'git merge origin/main && pnpm exec moderator push-main'];
+  for (const cmd of forms) {
+    assert.match(await bash(cmd, 'unit'), /only the main session moves main/, cmd);
+    assert.equal(await bash(cmd), 'allowed', cmd);
+  }
+  assert.equal(await bash('moderator orient', 'unit'), 'allowed');
+});
+
 test('force push is refused, a lease is not; rm -rf at or above the repository is refused', async () => {
   assert.match(await bash('git push -f origin cd-1-x'), /force push/);
   assert.match(await bash('GIT_TRACE=1 git push --force origin cd-1-x'), /force push/);
