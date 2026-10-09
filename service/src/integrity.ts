@@ -93,7 +93,7 @@ export async function judge(ask: Ask, ticket: Ticket | null, hunks: Hunk[]): Pro
   );
   if (answered.includes(false)) return null;
   return hunks.flatMap((h): Finding[] => {
-    if (h.patch === null) return [{ ...h, p: null, reason: 'GitHub shows no diff for this file (binary or too large), so Jev could not read it' }];
+    if (h.patch === null) return [{ ...h, p: null, reason: 'GitHub shows no diff for this file (a pure rename, binary or too large), so Jev could not read it' }];
     const ph = p.get(h)!;
     return ph < SANCTIONED ? [{ ...h, p: ph, reason: 'Jev does not read this change as sanctioned by the ticket' }] : [];
   });
@@ -124,6 +124,9 @@ async function fileHashes(hunks: Hunk[]): Promise<Map<string, string>> {
   for (const [file, hashes] of byFile) out.set(file, await hunkHash({ file, status: 'file', patch: hashes.sort().join('\n') }));
   return out;
 }
+
+/** A file with no patch and no head blob sha: nothing says it is unchanged. A removed one is known by its base blob. */
+const blind = (f: { patch?: string | null; sha?: string; status: string }) => !f.patch && !f.sha && f.status !== 'removed';
 
 const keyOf = (e: PullRequestEvent): Key => ({ repo: e.repository.full_name, pr: e.pull_request.number, sha: e.pull_request.head.sha });
 const decided = (row: IntegrityRow | null) => row?.state === 'approved' || row?.state === 'rejected';
@@ -210,15 +213,16 @@ export async function check(env: Env, deps: IntegrityDeps, e: PullRequestEvent):
   const { files, commitDates } = await deps.github.compare(e.installation.id, owner, repo, e.pull_request.base.sha, k.sha);
   const fingerprint = await diffHash(files);
   await env.DB.prepare('UPDATE integrity SET diff_hash = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(fingerprint, k.repo, k.pr, k.sha).run();
-  if (await carryApproval(env, deps.github, e, fingerprint)) return;
+  // A file with no patch and no head blob sha leaves the fingerprint blind to its content, so nothing carries over it.
+  if (!files.some(blind) && (await carryApproval(env, deps.github, e, fingerprint))) return;
   const all = existingTestHunks(files);
   // A file whose changes the owner approved on an earlier commit of this PR and base, unchanged since (owner, Q48 A).
-  const byFile = await fileHashes(all.filter((h) => h.patch !== null));
+  const byFile = await fileHashes(all.filter((h) => !blind(h)));
   await env.DB.prepare('UPDATE integrity SET test_files = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(JSON.stringify(Object.fromEntries(byFile)), k.repo, k.pr, k.sha).run();
   const approvedFiles = new Map(
     (await env.DB.prepare('SELECT hash, sha, decided_by FROM approved_files WHERE repo = ? AND pr = ? AND base_ref = ?').bind(k.repo, k.pr, e.pull_request.base.ref).all<{ hash: string; sha: string; decided_by: string }>()).results.map((r) => [r.hash, r]),
   );
-  const carried = all.filter((h) => h.patch !== null && approvedFiles.has(byFile.get(h.file)!));
+  const carried = all.filter((h) => byFile.has(h.file) && approvedFiles.has(byFile.get(h.file)!));
   const hunks = all.filter((h) => !carried.includes(h));
   const sticky = new Set(
     (await env.DB.prepare('SELECT hash FROM flags WHERE repo = ? AND pr = ?').bind(k.repo, k.pr).all<{ hash: string }>()).results.map((r) => r.hash),
@@ -323,7 +327,7 @@ export async function decide(env: Env, gh: GitHub, row: IntegrityRow, d: { by: s
   if (d.approve && meta.changes > 0) {
     // Each approved test file, by the exact changes it carries at this commit, so a later commit that leaves it as it
     // is keeps the approval (owner, Q48 A).
-    const files = new Set((JSON.parse(row.findings) as Finding[]).filter((f) => f.patch !== null).map((f) => f.file));
+    const files = new Set((JSON.parse(row.findings) as Finding[]).map((f) => f.file));
     const hashes = JSON.parse(row.test_files ?? '{}') as Record<string, string>;
     for (const [file, hash] of Object.entries(hashes).filter(([f]) => files.has(f)))
       await env.DB.prepare('INSERT OR IGNORE INTO approved_files (repo, pr, base_ref, hash, file, sha, decided_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(row.repo, row.pr, row.base_ref, hash, file, row.sha, d.by).run();
