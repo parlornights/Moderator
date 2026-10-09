@@ -1,6 +1,7 @@
 // PreToolUse. Refuses the few things no agent may do, whatever its prompt says:
-//   Bash:        a push to main or master by any agent (a branch and a pull request instead); a force push (except
-//                --force-with-lease); rm -rf at or above the repository; a unit checking out main; a unit's pure wait
+//   Bash:        a push to main or master by any agent (a branch and a pull request instead, or moderator push-main
+//                for harness-only changes, which only the main session runs); a force push (except --force-with-lease); rm -rf at or above the
+//                repository; a unit checking out main; a unit's pure wait
 //                (sleep, polling loop) once its measured waiting passed WAIT_CAP_SEC, so it hands back BLOCKED; a
 //                subagent's pattern kill (pkill, killall), which can stop other agents' processes in a shared sandbox.
 //   Edit/Write:  a subagent touching the repo's protectedPaths (the main session owns those).
@@ -14,6 +15,9 @@ import { isPureWait, isUnitType, waitsFile, WAIT_CAP_SEC } from '../units.js';
 
 import { deny } from './io.js';
 
+/** `moderator push-main`, however it is started: on PATH, a path to the bin, npx, pnpm (exec), npm exec, node. */
+const PUSH_MAIN = /^(?:npx\s+(?:-\S+\s+)*|pnpm\s+(?:exec\s+)?|npm\s+exec\s+(?:--\s+)?|node\s+)?(?:\S*\/)?moderator(?:\.js)?\s+push-main\b/;
+
 /**
  * The refusal for one git push, or null.
  * @param {string} s one shell segment, starting with `git push`
@@ -25,7 +29,7 @@ function pushRefusal(s) {
     return 'force push is not allowed; use --force-with-lease if you must, or rebase';
   }
   const toMain = refspecs.some((w) => /(^|:)(refs\/heads\/)?(main|master)$/.test(w));
-  return toMain ? 'no agent pushes to main: push a branch and open a pull request' : null;
+  return toMain ? 'no agent pushes to main: push a branch and open a pull request; harness-only changes: moderator push-main' : null;
 }
 
 /**
@@ -68,6 +72,7 @@ export default async function guard(input) {
       const refusal =
         (/^git\s+push\b/.test(s) && pushRefusal(s)) ||
         (/^git\s+checkout\s+(main|master)\b/.test(s) && agent !== 'main' && 'units stay on the task branch') ||
+        (PUSH_MAIN.test(s) && agent !== 'main' && 'only the main session moves main: hand the harness change back and let it run moderator push-main') ||
         (/^(pkill|killall)\b/.test(s) && agent !== 'main' && 'a pattern kill can stop other agents\' processes in this sandbox; kill the pid you started') ||
         (/^rm\s+(-\w*r\w*f|-\w*f\w*r)\b/.test(s) && atOrAbove(s.replace(/^rm\s+\S+\s*/, '').trim()) && 'recursive delete at or above the repository is not allowed');
       if (refusal) return deny(refusal);

@@ -23,6 +23,8 @@ const HELP = `moderator <command>
   linear update <ID> [--title <t>] [--description-file <f|->] [--status <s>] [--priority <0-4>]
                 [--add-label <l>]... [--remove-label <l>]... [--link <url> --link-title <t>]
   linear comment <ID> --body-file <f|->         Linear writes through Moderator, judged by Jev
+  push-main                                     a harness-only commit (directToMain paths) to the default branch, through
+                                                Moderator: merge origin/main first; anything else needs a pull request
   user-hooks                                    copy this repo's hooks into ~/.claude/settings.json, so they keep firing
                                                 when the session's project is not the repo (the environment's setup script)
   hook <name> [--repo <dir>]                    a Claude Code hook (reads its JSON on stdin)`;
@@ -191,6 +193,11 @@ const commands = {
       `not written: ${why}. If it belongs on Linear as it is, write it with the Linear connector's own tool (save_issue or save_comment) and the same text; the owner approves or refuses it at that prompt. Otherwise leave it out of Linear.`,
     );
     return 3;
+  },
+
+  async 'push-main'() {
+    const { pushMain } = await import('../src/pushmain.js');
+    return pushMain();
   },
 
   async 'user-hooks'() {

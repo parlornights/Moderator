@@ -52,6 +52,9 @@ const schema = z.strictObject({
       srcLinesNeedingTests: z.number().default(30),
     })
     .prefault({}),
+  /** Paths `moderator push-main` may take to the default branch without a pull request; an entry ending in `/` is a
+   *  folder. Moderator reads them from the default branch's own copy, so widening the list needs a pull request. */
+  directToMain: z.array(z.string().min(1)).optional(),
   /** Only the main session may edit these; a subagent puts its suggestion in its hand-back instead. */
   protectedPaths: z.array(z.string()).default([]),
   papercuts: z.string().default('docs/papercuts.md'),

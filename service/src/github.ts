@@ -40,7 +40,7 @@ export function normalizePem(pem: string): string {
 }
 
 /** GitHub hands out PKCS#1 keys; WebCrypto, which Octokit uses here, takes PKCS#8. */
-const pkcs8 = (pem: string) => {
+export const pkcs8 = (pem: string) => {
   const key = normalizePem(pem);
   return key.includes('BEGIN RSA PRIVATE KEY') ? createPrivateKey(key).export({ type: 'pkcs8', format: 'pem' }).toString() : key;
 };
@@ -86,7 +86,7 @@ export const appManifest = (publicUrl: string) => ({
   hook_attributes: { url: `${publicUrl}/github/webhook` },
   redirect_url: `${publicUrl}/github/created`,
   public: false,
-  default_permissions: { contents: 'read', pull_requests: 'write', checks: 'write', metadata: 'read' },
+  default_permissions: { contents: 'write', pull_requests: 'write', checks: 'write', metadata: 'read' },
   default_events: ['pull_request'],
 });
 
