@@ -1,7 +1,8 @@
 // PreToolUse. Refuses the few things no agent may do, whatever its prompt says:
 //   Bash:        a push to main or master by any agent (a branch and a pull request instead); a force push (except
 //                --force-with-lease); rm -rf at or above the repository; a unit checking out main; a unit's pure wait
-//                (sleep, polling loop) once its measured waiting passed WAIT_CAP_SEC, so it hands back BLOCKED.
+//                (sleep, polling loop) once its measured waiting passed WAIT_CAP_SEC, so it hands back BLOCKED; a
+//                subagent's pattern kill (pkill, killall), which can stop other agents' processes in a shared sandbox.
 //   Edit/Write:  a subagent touching the repo's protectedPaths (the main session owns those).
 
 import fs from 'node:fs';
@@ -67,6 +68,7 @@ export default async function guard(input) {
       const refusal =
         (/^git\s+push\b/.test(s) && pushRefusal(s)) ||
         (/^git\s+checkout\s+(main|master)\b/.test(s) && agent !== 'main' && 'units stay on the task branch') ||
+        (/^(pkill|killall)\b/.test(s) && agent !== 'main' && 'a pattern kill can stop other agents\' processes in this sandbox; kill the pid you started') ||
         (/^rm\s+(-\w*r\w*f|-\w*f\w*r)\b/.test(s) && atOrAbove(s.replace(/^rm\s+\S+\s*/, '').trim()) && 'recursive delete at or above the repository is not allowed');
       if (refusal) return deny(refusal);
     }

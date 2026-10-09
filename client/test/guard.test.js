@@ -45,6 +45,12 @@ test('a unit stays on its branch, the plugin\'s units too', async () => {
   assert.equal(await bash('git checkout main'), 'allowed');
 });
 
+test('a subagent may not kill by pattern; it kills the pid it started', async () => {
+  for (const cmd of ["pkill -f 'playwright test'", 'killall node', 'cd x && pkill vite']) assert.match(await bash(cmd, 'unit'), /pattern kill/, cmd);
+  assert.equal(await bash('kill 4242', 'unit'), 'allowed');
+  assert.equal(await bash("pkill -f 'playwright test'"), 'allowed');
+});
+
 test('a subagent may not edit protected paths; the main session may', async () => {
   for (const rel of ['.claude/settings.json', 'docs/papercuts.md', 'moderator.config.json']) {
     assert.match(await guard('Edit', { file_path: path.join(r.dir, rel) }, { agent_type: 'unit', agent_id: 'u1' }), /unit may not edit/, rel);

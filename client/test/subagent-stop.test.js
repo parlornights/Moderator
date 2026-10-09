@@ -27,6 +27,14 @@ test('a valid done hand-back with a green gate goes through, and the unit is no 
   assert.deepEqual(events(), ['gate', 'unit:handback']);
 });
 
+test('a unit resumed after its hand-back can hand back again', async () => {
+  const { r, stop, events } = await setup();
+  assert.equal(await stop(HANDBACK()), null);
+  r.put('a.js', 'fix from review');
+  assert.equal(await stop(`fixed in abc1234\n\n${HANDBACK({ notes: 'review findings fixed' })}`), null);
+  assert.deepEqual(events().filter((e) => e === 'unit:handback').length, 2);
+});
+
 test('not a hand-back, or a red gate, is sent back; after three blocks the unit is let through', async () => {
   const { stop, events } = await setup(undefined, { unit: { when: 'always', cmd: 'echo "✗ broken"; exit 1' } });
   const first = await stop('I think it works.');
