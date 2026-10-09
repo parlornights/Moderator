@@ -92,10 +92,10 @@ export function cli(args, { cwd, input = '', env: extra = {} }) {
  * Run one hook the way Claude Code does: its JSON on stdin, the session's directory in `cwd`.
  * @param {string} name
  * @param {Record<string, unknown>} input
- * @param {{ cwd: string, env?: Record<string, string> }} opts
+ * @param {{ cwd: string, env?: Record<string, string>, args?: string[] }} opts
  */
-export async function hook(name, input, { cwd, env: extra }) {
-  const r = await cli(['hook', name], { cwd, input: JSON.stringify({ cwd, ...input }), env: extra });
+export async function hook(name, input, { cwd, env: extra, args = [] }) {
+  const r = await cli(['hook', name, ...args], { cwd, input: JSON.stringify({ cwd, ...input }), env: extra });
   return { ...r, json: r.stdout ? JSON.parse(r.stdout) : null };
 }
 

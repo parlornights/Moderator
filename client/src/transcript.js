@@ -71,8 +71,14 @@ function lastUsage(transcriptPath, tailBytes) {
 }
 
 /**
- * The last n user and assistant turns: their text in full, without tool calls, tool output, system reminders or
- * HTML comments.
+ * User entries that the harness wrote, not the owner: hook feedback, background notices and the compaction summary. An
+ * interrupt stays: it says the owner stopped something.
+ */
+const NOT_OWNER = /^(?:Stop hook feedback:|<task-notification>|This session is being continued from a previous conversation)/;
+
+/**
+ * The last n owner and assistant turns: their text in full, without tool calls, tool output, system reminders, HTML
+ * comments, or the user entries the harness wrote (NOT_OWNER).
  * @param {string} transcriptPath
  * @param {number} [n]
  * @returns {{ role: 'U' | 'A', text: string }[]}
@@ -95,7 +101,7 @@ export function turns(transcriptPath, n = 25) {
       .map((/** @type {any} */ c) => c.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').replace(/<!--[\s\S]*?-->/g, '').trim())
       .filter(Boolean)
       .join('\n');
-    if (text) out.push({ role: rec.type === 'user' ? 'U' : 'A', text });
+    if (text && !(rec.type === 'user' && NOT_OWNER.test(text))) out.push({ role: rec.type === 'user' ? 'U' : 'A', text });
   }
   return out.slice(-n);
 }
