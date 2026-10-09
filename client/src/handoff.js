@@ -117,6 +117,11 @@ export function section(heading) {
   return (m?.[1] ?? '').trim();
 }
 
+/** The note's status says the session handed over: its successor carries the work on. */
+export function handedOver() {
+  return /^status:.*\bhanded over\b/im.test(agentPart());
+}
+
 /** Why the note is stale, or null. Commits only: an uncommitted edit does not count until it is committed. */
 export function staleness() {
   const p = handoffPath();
