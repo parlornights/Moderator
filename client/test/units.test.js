@@ -124,3 +124,25 @@ test("the README's SubagentStart and SubagentStop matchers pick the same agents 
     }
   }
 });
+
+test('every test-integrity approval waiting on the owner must be in the last message, link by link', async () => {
+  const { approvalTodos } = await import('../src/units.js');
+  const prs = [
+    { number: 244, state: 'open', merged: false, approval: 'https://moderator.parlornights.com/approve/parlornights/CrookedDuke/244/abc' },
+    { number: 229, state: 'open', merged: false, approval: null },
+    { number: 251, state: 'open', merged: false, approval: 'https://moderator.parlornights.com/approve/parlornights/CrookedDuke/251/def' },
+  ];
+  const todo = approvalTodos({ units: [], checkIns: [], watched: new Set(), prs }, 'Please approve #244: https://moderator.parlornights.com/approve/parlornights/CrookedDuke/244/abc');
+  assert.equal(todo.length, 1);
+  assert.match(todo[0], /#251 https:\/\/moderator\.parlornights\.com\/approve\/parlornights\/CrookedDuke\/251\/def/);
+  assert.doesNotMatch(todo[0], /#244|#229/);
+  assert.deepEqual(approvalTodos({ units: [], checkIns: [], watched: new Set(), prs: prs.slice(1, 2) }, ''), []);
+});
+
+test('a session that handed over is not held to re-arm check-ins for the PRs it watched', () => {
+  const open = { number: 244, state: 'open', merged: false, mergeable: 'clean' };
+  const session = { units: [], checkIns: [], watched: new Set([244]), prs: [open] };
+  assert.equal(unitTodos(session, T0).length, 1);
+  assert.deepEqual(unitTodos(session, T0, { handedOver: true }), []);
+  assert.equal(unitTodos({ ...session, units: [running()] }, T0, { handedOver: true }).length, 1, 'a running unit still needs its check-in');
+});

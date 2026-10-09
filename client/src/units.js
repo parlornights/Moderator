@@ -70,7 +70,7 @@ export function isPureWait(cmd) {
 }
 
 /**
- * @typedef {{ number: number, state: string, merged: boolean, mergeable?: string }} Pr
+ * @typedef {{ number: number, state: string, merged: boolean, mergeable?: string, approval?: string | null }} Pr
  * @typedef {{ id: string, type: string, description: string, started: number | null, running: boolean, idleMin?: number | null, worktree?: string | null, branch?: string | null, pr?: Pr }} Unit
  * @typedef {{ units: Unit[], checkIns: number[], watched: Set<number>, prs?: Pr[] }} Session
  */
@@ -136,13 +136,15 @@ export function alive(u) {
 }
 
 /**
- * What the session must do before it stops, given each running unit's state. Pure.
+ * What the session must do before it stops, given each running unit's state. Pure. A session that handed over does
+ * not keep re-arming check-ins for the PRs it watched: its successor watches them.
  * @param {Session} session
  * @param {number} [now]
+ * @param {{ handedOver?: boolean }} [opts]
  */
-export function unitTodos({ units, checkIns, watched, prs = [] }, now = Date.now()) {
+export function unitTodos({ units, checkIns, watched, prs = [] }, now = Date.now(), { handedOver = false } = {}) {
   const running = units.filter(alive);
-  const waiting = prs.filter((p) => p.state === 'open');
+  const waiting = handedOver ? [] : prs.filter((p) => p.state === 'open');
   if (!running.length && !waiting.length) return [];
   const todo = [];
   if (!checkIns.some((t) => t > now)) {
@@ -226,10 +228,13 @@ export function inspect(session, transcriptPath, { now = Date.now(), remote = tr
   session.prs = [];
   if (remote && repo) {
     for (const number of session.watched) {
-      const out = sh('gh', ['api', `repos/${repo}/pulls/${number}`, '--jq', '[.state, .merged, .mergeable_state] | @tsv']);
+      const out = sh('gh', ['api', `repos/${repo}/pulls/${number}`, '--jq', '[.state, .merged, .mergeable_state, .head.sha] | @tsv']);
       if (!out) continue;
-      const [state, merged, mergeable] = out.split('\t');
-      session.prs.push({ number, state, merged: merged === 'true', mergeable });
+      const [state, merged, mergeable, sha] = out.split('\t');
+      // test-integrity waiting on the owner: its approval page is what the session must hand him.
+      const check = state === 'open' ? sh('gh', ['api', `repos/${repo}/commits/${sha}/check-runs?check_name=test-integrity`, '--jq', '.check_runs[0] | [.conclusion, .details_url] | @tsv']) : null;
+      const [conclusion, url] = (check || '').split('\t');
+      session.prs.push({ number, state, merged: merged === 'true', mergeable, approval: conclusion === 'action_required' && url ? url : null });
     }
   }
   return session;
@@ -255,4 +260,16 @@ export function formatUnits(s) {
   for (const p of s.prs ?? []) lines.push(`watched PR #${p.number}: ${p.merged ? 'merged' : p.state}${p.state === 'open' ? `, ${p.mergeable}` : ''}`);
   for (const t of unitTodos(s)) lines.push(`FLAG: ${t}`);
   return lines.join('\n');
+}
+
+/**
+ * Every test-integrity approval waiting on the owner in the session's watched PRs that the last message does not hand
+ * him: he is given the links, never sent to look for them. Pure.
+ * @param {Session} session
+ * @param {string} lastMessage
+ */
+export function approvalTodos({ prs = [] }, lastMessage) {
+  const missing = prs.filter((p) => p.approval && !lastMessage.includes(p.approval));
+  if (!missing.length) return [];
+  return [`test-integrity waits on the owner: end your message with every approval link, one per line with its PR (${missing.map((p) => `#${p.number} ${p.approval}`).join('; ')})`];
 }

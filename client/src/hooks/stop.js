@@ -12,8 +12,8 @@ import path from 'node:path';
 
 import { jev } from '../api.js';
 import { branch, git, isMainBranch } from '../git.js';
-import { contextHandoffDue, linearGaps, section, staleness, unlinkedArtifacts, writeHandoff } from '../handoff.js';
-import { alive, unitTodos, watch } from '../units.js';
+import { contextHandoffDue, handedOver, linearGaps, section, staleness, unlinkedArtifacts, writeHandoff } from '../handoff.js';
+import { alive, approvalTodos, unitTodos, watch } from '../units.js';
 import { appendEvent, issueId, workDir } from '../work.js';
 
 import { block } from './io.js';
@@ -70,7 +70,7 @@ export default async function stop(input) {
   let unitTodo = [];
   try {
     if (input.transcript_path) session = watch(input.transcript_path, { remote: !input.stop_hook_active });
-    if (session && !input.stop_hook_active) unitTodo = unitTodos(session);
+    if (session && !input.stop_hook_active) unitTodo = [...unitTodos(session, Date.now(), { handedOver: handedOver() }), ...approvalTodos(session, String(input.last_assistant_message || ''))];
   } catch (e) {
     process.stderr.write(`moderator: unit check skipped: ${e instanceof Error ? e.message : e}\n`);
   }

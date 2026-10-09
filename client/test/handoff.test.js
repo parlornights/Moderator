@@ -100,3 +100,13 @@ test('the issue must be read this session, by the connector whatever its server 
   assert.match(gaps([{ isSidechain: true, ...toolUse('mcp__Linear__get_issue', { id: 'CD-1' }) }]).join(), /CD-1 was not read/);
   assert.deepEqual(linearGaps({ transcriptPath: `${r.scratch}/missing.jsonl` }), []);
 });
+
+test('the note says handed over in its status line', async () => {
+  const { handedOver } = await import('../src/handoff.js');
+  const r = repo({ branch: 'cd-4-x' });
+  process.chdir(r.dir);
+  r.put('.work/CD-4/handoff.md', 'status: in-progress\n');
+  assert.equal(handedOver(), false);
+  r.put('.work/CD-4/handoff.md', 'status: in-progress (handed over at 78%, 9 Oct; a new session takes over)\n');
+  assert.equal(handedOver(), true);
+});
