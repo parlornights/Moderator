@@ -1,6 +1,8 @@
 // A unit's last message is a hand-back the parent can act on: its shape, a green gate for the tree as it is, the
 // reviewer the risk asks for, tests for new source, the branch's issue, and a proof page for a diff touching proofPaths.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
 
 import { cli, fakeModerator, repo } from './helpers.js';
@@ -106,11 +108,25 @@ test('a diff touching proofPaths needs a "proof": an Artifact URL, or "none: <re
   await cli(['gate'], { cwd: r.dir });
   const missing = checkHandback(handback({ issue: 'CD-5' }));
   assert.equal(missing.ok, false);
-  assert.match(missing.errors.join(), /touches proofPaths \(app\/screens\/Lobby\.js\), so "proof" is required/);
-  assert.match(checkHandback(handback({ issue: 'CD-5', proof: '' })).errors.join(), /"proof" is required/);
-  const refactor = checkHandback(handback({ issue: 'CD-5', proof: 'none: refactor' }));
-  assert.equal(refactor.ok, true, refactor.errors.join());
+  assert.match(missing.errors.join(), /touches proofPaths \(app\/screens\/Lobby\.js\): proof is missing/);
+  assert.match(checkHandback(handback({ issue: 'CD-5', proof: '' })).errors.join(), /proof is missing/);
+  for (const proof of ['none: refactor', 'none: nothing visible']) {
+    const none = checkHandback(handback({ issue: 'CD-5', proof }));
+    assert.equal(none.ok, true, none.errors.join());
+  }
   const url = checkHandback(handback({ issue: 'CD-5', proof: 'https://claude.ai/artifact/abc' }));
+  assert.equal(url.ok, true, url.errors.join());
+});
+
+test('a file renamed into proofPaths needs a proof', async () => {
+  const r = repo({ branch: 'cd-7-x', config: { ...CONFIG, proofPaths: ['app/screens/**'] }, files: { 'lib/Lobby.js': 'a\nb\nc\n' } });
+  process.chdir(r.dir);
+  fs.mkdirSync(path.join(r.dir, 'app/screens'), { recursive: true });
+  r.git('mv', 'lib/Lobby.js', 'app/screens/Lobby.js');
+  r.git('commit', '-qm', 'move the lobby');
+  await cli(['gate'], { cwd: r.dir });
+  assert.match(checkHandback(handback({ issue: 'CD-7', tests: 'n/a: a move' })).errors.join(), /touches proofPaths \(app\/screens\/Lobby\.js\): proof is missing/);
+  const url = checkHandback(handback({ issue: 'CD-7', tests: 'n/a: a move', proof: 'https://claude.ai/artifact/abc' }));
   assert.equal(url.ok, true, url.errors.join());
 });
 

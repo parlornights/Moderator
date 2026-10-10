@@ -36,7 +36,7 @@ HANDBACK
 - `status`: `done`, `blocked` (could not finish; say what in `notes`), `partial` (turn limit; `notes` says exactly where you stopped and the next step).
 - `gate`: the tree hash from your last GREEN gate line.
 - `tests`: `added N (path)`, `updated N`, or `n/a: <reason>`.
-- `proof`: the URL of the Artifact page with the screenshots, or `none: <reason>` when nothing visible changed. When the diff touches `proofPaths` in `moderator.config.json`, a missing or empty proof is refused. A `none:` reason is judged by the reviewer; never fake a screenshot.
+- `proof`: the URL of the Artifact page with the screenshots, or `none: <reason>` when nothing visible changed. When the diff touches `proofPaths` in `moderator.config.json`, a missing proof is refused; `none: <reason>` is accepted when nothing visible changed (the reviewer judges the reason). Never fake a screenshot.
 - `papercuts`: one line each, `category: text -> fix`. Categories: gate, scope, protocol, repo, flake. Empty array if none.
 - `notes`: one line, only what the parent must know. Not a summary of your work; the PR has that.
 
