@@ -155,7 +155,7 @@ async function save(env: Env, e: PullRequestEvent, run: Run): Promise<boolean> {
   const { meta } = await env.DB.prepare(
     `INSERT INTO integrity (repo, pr, sha, base_ref, installation_id, title, issue, state, result, findings, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (repo, pr, sha) DO UPDATE SET base_ref = excluded.base_ref, installation_id = excluded.installation_id, title = excluded.title, issue = excluded.issue,
-       state = excluded.state, result = excluded.result, findings = excluded.findings, created_at = excluded.created_at, decided_by = NULL, decided_at = NULL, reason = NULL
+       state = excluded.state, result = excluded.result, findings = excluded.findings, created_at = excluded.created_at, decided_by = NULL, decided_at = NULL, reason = NULL, notified = NULL
      WHERE integrity.state NOT IN ('approved', 'rejected') OR integrity.base_ref != excluded.base_ref`,
   )
     .bind(k.repo, k.pr, k.sha, e.pull_request.base.ref, e.installation.id, e.pull_request.title, run.issue, run.state, run.result, JSON.stringify(run.findings), new Date().toISOString())
@@ -195,31 +195,58 @@ async function publish(env: Env, gh: GitHub, e: PullRequestEvent, run: Run): Pro
   await audit.record(env.DB, { action: `github/${CONTEXT}`, input: { ...k, base: e.pull_request.base.ref, issue: run.issue }, jev: run.findings, outcome: run.state, response: { result: run.result } });
   if (run.state !== 'failure') return;
   const since = await changedSince(env, e, run.findings);
-  if (since === '') return;
-  await commentSafely(gh, e.installation.id, owner, repo, k.pr, `@${e.pull_request.user.login} **test-integrity** on ${short(k.sha)}: ${run.result}.${since ?? ''}\n\n${summary(run.findings)}\n\nApprove or reject: ${approveUrl(env, k)}`);
+  if (typeof since === 'object' && since !== null) {
+    // Already told on an earlier commit, and nothing was decided since: carried forward, so the next run stays quiet too.
+    await env.DB.prepare('UPDATE integrity SET notified = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(since.notified, k.repo, k.pr, k.sha).run();
+    return;
+  }
+  const body = `@${e.pull_request.user.login} **test-integrity** on ${short(k.sha)}: ${run.result}.${since ?? ''}\n\n${summary(run.findings)}\n\nApprove or reject: ${approveUrl(env, k)}`;
+  if (await commentSafely(gh, e.installation.id, owner, repo, k.pr, body))
+    await env.DB.prepare('UPDATE integrity SET notified = ? WHERE repo = ? AND pr = ? AND sha = ?').bind(k.sha, k.repo, k.pr, k.sha).run();
 }
 
-/** A finding by its file and hunk hash; one with no patch by its fingerprint and reason. */
-const pendingKey = async (f: Finding) => (f.patch === null ? `${await hunkHash(f)}\n${f.reason}` : hunkHash(f));
+/**
+ * A finding by its file and hunk hash; one with no patch by its fingerprint and reason. A blind file says nothing of its
+ * content, so it is keyed by the run's commit too: it never matches another run, as nothing carries over it.
+ */
+async function pendingKey(f: Finding, sha: string): Promise<string> {
+  if (f.patch !== null) return hunkHash(f);
+  return `${await hunkHash(f)}\n${f.reason}${blind(f) && !f.file.startsWith('(') ? `\n${sha}` : ''}`;
+}
+
+const counts = (keys: string[]) => keys.reduce((m, key) => m.set(key, (m.get(key) ?? 0) + 1), new Map<string, number>());
+/** How many of `a`'s keys `b` does not hold, counting each key as often as it occurs. */
+const missing = (a: Map<string, number>, b: Map<string, number>) => [...a].reduce((n, [key, c]) => n + Math.max(0, c - (b.get(key) ?? 0)), 0);
 
 /**
- * What changed in the findings awaiting a decision since the latest earlier run on this PR and base. Empty when that run
- * also awaits a decision on exactly these findings: its comment already asked, and the check run on this commit still
- * does, so the owner is not pinged again. Null when there is nothing to compare with, after a decision among others.
+ * What changed in the findings awaiting a decision since the latest earlier run on this PR and base. `{ notified }` when
+ * that run awaits a decision on exactly these findings, its comment was posted, and the owner decided nothing since:
+ * the check run on this commit still asks, so the owner is not pinged again. Null when there is nothing to compare with.
  */
-async function changedSince(env: Env, e: PullRequestEvent, findings: Finding[]): Promise<string | null> {
+async function changedSince(env: Env, e: PullRequestEvent, findings: Finding[]): Promise<string | null | { notified: string }> {
   const k = keyOf(e);
-  const earlier = await env.DB.prepare('SELECT sha, state, findings FROM integrity WHERE repo = ? AND pr = ? AND base_ref = ? AND sha != ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
-    .bind(k.repo, k.pr, e.pull_request.base.ref, k.sha)
-    .first<{ sha: string; state: string; findings: string }>();
+  const base = e.pull_request.base.ref;
+  const earlier = await env.DB.prepare(
+    'SELECT sha, state, findings, created_at, notified FROM integrity WHERE repo = ? AND pr = ? AND base_ref = ? AND sha != ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+  )
+    .bind(k.repo, k.pr, base, k.sha)
+    .first<{ sha: string; state: string; findings: string; created_at: string; notified: string | null }>();
   if (earlier?.state !== 'failure') return null;
-  const before = new Set(await Promise.all((JSON.parse(earlier.findings) as Finding[]).map(pendingKey)));
-  const now = await Promise.all(findings.map(async (f) => [f, await pendingKey(f)] as const));
-  const added = now.filter(([, key]) => !before.has(key)).map(([f]) => f);
-  const nowKeys = new Set(now.map(([, key]) => key));
-  const gone = [...before].filter((key) => !nowKeys.has(key)).length;
-  if (!added.length && !gone) return '';
-  const files = [...new Set(added.map((f) => `\`${f.file}\``))].join(', ');
+  // A decision on any commit since, even an older one approved from its own link, is news the next comment carries.
+  if (await env.DB.prepare('SELECT 1 FROM integrity WHERE repo = ? AND pr = ? AND base_ref = ? AND decided_at > ? LIMIT 1').bind(k.repo, k.pr, base, earlier.created_at).first()) return null;
+  const earlierFindings = JSON.parse(earlier.findings) as Finding[];
+  const before = counts(await Promise.all(earlierFindings.map((f) => pendingKey(f, earlier.sha))));
+  const keyed = await Promise.all(findings.map(async (f) => [f, await pendingKey(f, k.sha)] as const));
+  const now = counts(keyed.map(([, key]) => key));
+  const gone = missing(before, now);
+  const left = new Map(before);
+  const added = keyed.filter(([, key]) => {
+    const c = left.get(key) ?? 0;
+    left.set(key, c - 1);
+    return c <= 0;
+  });
+  if (!added.length && !gone) return earlier.notified ? { notified: earlier.notified } : null;
+  const files = [...new Set(added.map(([f]) => `\`${f.file}\``))].join(', ');
   return `\n\nChanged since ${short(earlier.sha)}: ${[added.length ? `${added.length} new or changed (${files})` : '', gone ? `${gone} no longer flagged` : ''].filter(Boolean).join('; ')}.`;
 }
 
@@ -313,11 +340,13 @@ export async function errored(env: Env, gh: GitHub, e: PullRequestEvent, err: un
 const short = (sha: string) => sha.slice(0, 7);
 
 /** The check and the record are what count; a comment that fails is logged, not retried. */
-async function commentSafely(gh: GitHub, installationId: number, owner: string, repo: string, pr: number, body: string) {
+async function commentSafely(gh: GitHub, installationId: number, owner: string, repo: string, pr: number, body: string): Promise<boolean> {
   try {
     await gh.comment(installationId, owner, repo, pr, body);
+    return true;
   } catch (e) {
     console.error('test-integrity comment failed', `${owner}/${repo}#${pr}`, e);
+    return false;
   }
 }
 
@@ -334,6 +363,7 @@ export interface IntegrityRow extends Key {
   reason: string | null;
   diff_hash: string | null;
   test_files: string | null;
+  notified: string | null;
 }
 
 export const getRow = (db: D1Database, k: Key) => db.prepare('SELECT * FROM integrity WHERE repo = ? AND pr = ? AND sha = ?').bind(k.repo, k.pr, k.sha).first<IntegrityRow>();

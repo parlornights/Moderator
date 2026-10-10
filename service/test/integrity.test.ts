@@ -433,6 +433,105 @@ describe('PR comments ping the owner once per set of pending findings', () => {
     expect(comments[1].body).not.toContain('Changed since');
     expect(checks.at(-1)).toMatchObject({ sha: 'p7', check: { conclusion: 'action_required' } });
   });
+
+  it('comments again after a rejection of the commit just before', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('p8'));
+    await decide('p8', 'decision=reject&reason=no');
+    files = [changed, work];
+    await hook(event('p9'));
+    expect(comments.filter((c) => c.body.includes('**test-integrity** on'))).toHaveLength(2);
+  });
+
+  it('comments after a decision on an older commit, though the latest earlier run was quiet', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('q1'));
+    files = [changed, work];
+    await hook(event('q2'));
+    expect(comments).toHaveLength(1);
+    await decide('q1', 'decision=reject');
+    await hook(event('q3'));
+    expect(comments.at(-1)!.body).toContain('**test-integrity** on q3');
+  });
+
+  it('comments after an approval of an older commit with a blind file, though the latest earlier run was quiet', async () => {
+    const blind: ChangedFile = { filename: 'e2e/fixtures.e2e.ts', status: 'modified', baseSha: 'big1' };
+    files = [blind];
+    await hook(event('r1'));
+    await hook(event('r2'));
+    await decide('r1', 'decision=approve');
+    const n = comments.length;
+    await hook(event('r3'));
+    expect(comments).toHaveLength(n + 1);
+    expect(comments.at(-1)!.body).toContain('on r3');
+    expect(checks.at(-1)).toMatchObject({ sha: 'r3', check: { conclusion: 'action_required' } });
+  });
+
+  it('comments when a push only removes findings, and stays quiet when the same findings come in another order', async () => {
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    files = [changed, other];
+    answers = { h1: { noul: 0.1 }, h2: { noul: 0.1 } };
+    await hook(event('o1'));
+    files = [other, changed];
+    await hook(event('o2'));
+    expect(comments).toHaveLength(1);
+    files = [changed];
+    await hook(event('o3'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('Changed since o2: 1 no longer flagged');
+  });
+
+  it('counts a repeated identical hunk as another finding', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('d1'));
+    files = [{ ...changed, patch: `${changed.patch}\n@@ -9 +9 @@\n-  expect(total).toBe(120);\n+  expect(total).toBeGreaterThan(0);` }];
+    await hook(event('d2'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('Changed since d1: 1 new or changed');
+  });
+
+  it('comments when a file with no patch changes its blob, its blob at the merge base, or its status', async () => {
+    const renamed: ChangedFile = { filename: 'infra/a.test.mjs', previousFilename: 'infra/b.test.mjs', status: 'renamed', sha: 'blob1', baseSha: 'blob1' };
+    files = [renamed];
+    await hook(event('b1'));
+    await hook(event('b2'));
+    expect(comments).toHaveLength(1);
+    for (const [sha, f] of [['b3', { ...renamed, sha: 'blob2' }], ['b4', { ...renamed, sha: 'blob2', baseSha: 'blob0' }], ['b5', { ...renamed, sha: 'blob2', baseSha: 'blob0', status: 'modified' }]] as const) {
+      files = [f];
+      await hook(event(sha));
+      expect(comments.at(-1)!.body).toContain(`on ${sha}`);
+    }
+    expect(comments).toHaveLength(4);
+  });
+
+  it('comments when the earlier run never finished', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('w1'));
+    await env.DB.exec("UPDATE integrity SET state = 'pending' WHERE sha = 'w1'");
+    await hook(event('w2'));
+    expect(comments).toHaveLength(2);
+  });
+
+  it('comments again when the earlier comment failed to post', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    const comment = gh.comment;
+    gh.comment = async () => {
+      throw new Error('GitHub is down');
+    };
+    try {
+      await hook(event('f1'));
+    } finally {
+      gh.comment = comment;
+    }
+    await hook(event('f2'));
+    await hook(event('f3'));
+    expect(comments.map((c) => c.body.match(/on (\w+)/)![1])).toEqual(['f2']);
+  });
 });
 
 describe('workStart', () => {
