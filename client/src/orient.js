@@ -1,22 +1,22 @@
 // The onboarding block: printed by the SessionStart hook and by `moderator orient`. Facts only. The handoff note is
 // named by its path, never inlined, so the hook's size cap never cuts it.
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { branch, git, root } from './git.js';
+import { ghApi, openPr } from './github.js';
 import { handoffPath } from './handoff.js';
-import { issueId, readEvents, workDir } from './work.js';
+import { issueId, readEvents, runningUnits } from './work.js';
 
-function openPr() {
-  const r = spawnSync('gh', ['pr', 'view', '--json', 'number,state,url,mergeable,reviewDecision', '--jq', '"#\\(.number) \\(.state) \\(.mergeable) \\(.reviewDecision) \\(.url)"'], {
-    cwd: root(),
-    encoding: 'utf8',
-    timeout: 10_000,
-  });
-  if (r.error) return 'unknown (gh not available)';
-  return r.status === 0 ? r.stdout.trim() : 'none for this branch';
+/** The branch's open PR with its merge state; "unknown (why)" when GitHub was not reached, never "none" then. */
+function prLine() {
+  const r = openPr();
+  if (!r.ok) return `unknown (${r.why})`;
+  if (!r.pr) return 'none for this branch';
+  const detail = ghApi(`repos/${r.slug}/pulls/${r.pr.number}`);
+  const state = detail.ok ? ` ${detail.data.mergeable_state}` : '';
+  return `#${r.pr.number} open${r.pr.draft ? ' draft' : ''}${state} ${r.pr.url} "${r.pr.title}"`;
 }
 
 function lastEvents(n = 10) {
@@ -31,18 +31,15 @@ function lastEvents(n = 10) {
     });
 }
 
-function running() {
-  try {
-    const r = JSON.parse(fs.readFileSync(path.join(workDir(), 'running.json'), 'utf8'));
-    const ids = Object.keys(r);
-    return ids.length ? ids.map((id) => `${r[id].agent_type}(${id.slice(0, 8)})`).join(', ') : 'none';
-  } catch {
-    return 'none';
-  }
+/** @param {string | null} [session] */
+function running(session) {
+  const r = runningUnits({ session });
+  const ids = Object.keys(r);
+  return ids.length ? ids.map((id) => `${r[id].agent_type}(${id.slice(0, 8)})`).join(', ') : 'none';
 }
 
-/** @param {{ source?: string }} [opts] */
-export function orient({ source } = {}) {
+/** @param {{ source?: string, session?: string | null }} [opts] */
+export function orient({ source, session = null } = {}) {
   const out = [];
   const st = (git(['status', '--short']) || '').split('\n').filter(Boolean);
   if (source === 'compact') {
@@ -55,8 +52,8 @@ export function orient({ source } = {}) {
       : 'No handoff note yet. One is created on the first compaction or stop; the handoff skill says what goes in it.',
   );
   out.push(`orient: branch ${branch()} (head ${git(['rev-parse', '--short', 'HEAD']) || '?'}), issue ${issueId() || 'not set'}, uncommitted: ${st.length} file${st.length === 1 ? '' : 's'}`);
-  out.push(`PR for this branch: ${openPr()}`);
-  out.push(`units running in this session: ${running()}`);
+  out.push(`PR for this branch: ${prLine()}`);
+  out.push(`units running in this session: ${running(session)}`);
   const ev = lastEvents();
   if (ev.length) out.push('last events:', ...ev);
   return out.join('\n');

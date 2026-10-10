@@ -54,7 +54,7 @@ function run(cmd, { logFile, timeoutMs }) {
 
 /**
  * @typedef {{ id: string, status: 'pass' | 'fail' | 'timeout' | 'skipped', ms?: number, log?: string, tail?: string, reason?: string }} CheckResult
- * @typedef {{ ok: boolean, at: string, issue: string | null, treeHash: string, base: string, global: boolean, packages: string[], checks: CheckResult[], skipped: { id: string, reason: string }[], ms: number, cached?: boolean }} GateResult
+ * @typedef {{ ok: boolean, at: string, issue: string | null, treeHash: string | null, base: string, global: boolean, packages: string[], checks: CheckResult[], skipped: { id: string, reason: string }[], ms: number, cached?: boolean }} GateResult
  */
 
 /**
@@ -75,7 +75,7 @@ export function runGate(opts = {}) {
 
   if (opts.ifChanged && !partial) {
     const prev = readJson(resultPath);
-    if (prev?.ok && prev.treeHash === hash) return { ...prev, cached: true };
+    if (hash && prev?.ok && prev.treeHash === hash) return { ...prev, cached: true };
   }
 
   const t0 = Date.now();

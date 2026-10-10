@@ -4,6 +4,9 @@
 //     down, no criterion Jev reads as missing from the diff.
 // Otherwise it is blocked with the failure as its next prompt. After MAX_BLOCKS it is let through as blocked, so a
 // unit never loops forever. Jev not answering never blocks: its check is skipped.
+// The hook runs where the unit worked, which for a unit in its own worktree is not the checkout whose ledger its
+// SubagentStart wrote: a unit that stops is taken out of every running.json that holds it (forgetUnit), and its
+// unit:* event goes to that ledger.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +19,7 @@ import { formatGate, runGate } from '../gate.js';
 import { add as addPapercut } from '../papercut.js';
 import { diffSummary } from '../risk.js';
 import { waitsFile } from '../units.js';
-import { appendEvent, readJson, workDir, writeJson } from '../work.js';
+import { appendEvent, forgetUnit, readJson, workDir, writeJson } from '../work.js';
 
 import { block } from './io.js';
 
@@ -52,9 +55,8 @@ function diffText() {
 
 /** @param {any} input */
 export default async function subagentStop(input) {
-  if (input.last_assistant_message === undefined) return; // malformed hook input: fail open, never trap a unit
-  const dir = workDir();
   const id = input.agent_id || 'unit';
+  const dir = workDir();
   const countsPath = path.join(dir, 'stop-blocks.json');
   const counts = readJson(countsPath, {});
   const blocks = counts[id] || 0;
@@ -64,16 +66,11 @@ export default async function subagentStop(input) {
    * @param {Record<string, unknown>} [data]
    */
   const finish = (kind, data = {}) => {
-    const runningPath = path.join(dir, 'running.json');
-    const running = readJson(runningPath);
-    if (running) {
-      delete running[id];
-      writeJson(runningPath, running);
-    }
+    const at = forgetUnit(id);
     delete counts[id];
     writeJson(countsPath, counts);
     fs.rmSync(waitsFile(id), { force: true });
-    appendEvent(`unit:${kind}`, { id: id.slice(0, 8), ...data });
+    appendEvent(`unit:${kind}`, { id: id.slice(0, 8), ...data }, at ?? undefined);
   };
   /** @param {string} reason */
   const refuse = (reason) => {
@@ -82,6 +79,9 @@ export default async function subagentStop(input) {
     appendEvent('unit:blocked', { id: id.slice(0, 8), n: blocks + 1, why: reason.split('\n')[0].slice(0, 120) });
     return block(`${reason}\n\n(block ${blocks + 1} of ${MAX_BLOCKS}; after ${MAX_BLOCKS} you are let through with status "blocked")`);
   };
+
+  // No last message (Claude Code sends none for some stops): nothing to judge, so it goes through, and is recorded.
+  if (input.last_assistant_message === undefined) return finish('stop', { why: 'no last message' });
 
   const last = String(input.last_assistant_message);
   const parsed = parseHandback(last);

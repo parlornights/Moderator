@@ -24,20 +24,36 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "matcher": "startup|resume|clear|compact|fork", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "session-start"], "timeout": 60 }] }],
-    "PreToolUse": [{ "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "guard"], "timeout": 10 }] }],
+    "SessionStart": [{ "matcher": "startup|resume|clear|compact|fork", "hooks": [{ "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/moderator-session-start.sh"], "timeout": 180 }] }],
+    "PreToolUse": [{ "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "guard"], "timeout": 10 }] }],
     "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "post-edit"], "timeout": 90 }] },
-      { "matcher": "Artifact", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "post-artifact"], "timeout": 10 }] },
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "context-watch"], "timeout": 10 }] }
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "post-edit"], "timeout": 90 }] },
+      { "matcher": "Artifact", "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "post-artifact"], "timeout": 10 }] },
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "context-watch"], "timeout": 10 }] }
     ],
-    "SubagentStart": [{ "matcher": "^([\\w-]+:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-start"], "timeout": 10 }] }],
-    "SubagentStop": [{ "matcher": "^([\\w-]+:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-stop"], "timeout": 2400 }] }],
-    "PreCompact": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "pre-compact"], "timeout": 30 }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "stop"], "timeout": 120 }] }]
+    "SubagentStart": [{ "matcher": "^([\\w-]+:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-start"], "timeout": 10 }] }],
+    "SubagentStop": [{ "matcher": "^([\\w-]+:)?unit(-deep)?$", "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "subagent-stop"], "timeout": 2400 }] }],
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "pre-compact"], "timeout": 30 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node", "args": ["--disable-warning=UNDICI-EHPA", "${CLAUDE_PROJECT_DIR}/node_modules/@parlornights/moderator/bin/moderator.js", "hook", "stop"], "timeout": 120 }] }]
   }
 }
 ```
+
+Every `node` hook passes `--disable-warning=UNDICI-EHPA`, so the warning Node prints when the session sets
+`NODE_USE_ENV_PROXY` stays out of the hook output.
+
+### Session start and the install
+
+Claude Code starts a repository's SessionStart hooks in parallel, so in a fresh container the session-start hook
+starts while the repository's own install step is still installing the client. SessionStart therefore runs
+`.claude/hooks/moderator-session-start.sh`, which `moderator sync` writes and the repository commits, never the client
+directly. The contract:
+
+- The repository installs the client in its own SessionStart hook or setup script, as it installs everything else.
+- The launcher waits until the client loads (`moderator ready`), at most `MODERATOR_INSTALL_WAIT` seconds (120 by
+  default), then runs `moderator hook session-start` with the hook's input. Keep the hook's `timeout` above the wait.
+- When the client does not load in time, the session starts without its start context, and the user is told so in one
+  line; `moderator orient` prints it once the client is installed.
 
 | Hook | Does |
 |---|---|
@@ -48,7 +64,7 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 | `context-watch` | Past the hand-over share of the context window, tells the session once to write the handoff note and stop. |
 | `subagent-start`, `subagent-stop` | A unit may stop only with a valid hand-back on a green gate (with a `proof` when the diff touches `proofPaths`), or an escalation; Jev judges a NEEDS DECISION line and the acceptance criteria against the diff. |
 | `pre-compact` | Writes and commits the note's auto block before a compaction. |
-| `stop` | Commits a checkpoint, holds the turn once for what is left (units without a check-in, open questions Jev reads as not whole or not repeated, a stale note, the issue not read on Linear, an unlinked artifact, a hand-over due), then pushes the branch. |
+| `stop` | On a branch that names no issue, takes it from the open PR's title, else holds the turn once to say the task has no issue. Commits a checkpoint, holds the turn once for what is left (units without a check-in, open questions Jev reads as not whole or not repeated, a stale note, the issue not read on Linear, an unlinked artifact, a hand-over due), then pushes the branch. |
 
 A hook never stops a session over its own bug or a broken config: it does nothing, and session-start, stop and
 subagent-stop tell the user so in one line, since the protocol is off until it is fixed. Jev not answering never blocks: the check is skipped and the Stop hook
@@ -58,8 +74,20 @@ run.
 A unit is the `unit` or `unit-deep` agent, or the same from a plugin (`moderator:unit`); the matchers above take both,
 whatever the plugin is called, as the hooks do.
 
-The issue is the one the branch name carries (`issuePattern`); a branch without one gets no ledger, and the hooks
-stay quiet there. The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, the gate's results and logs.
+The issue is the one the branch name carries (`issuePattern`). On a branch that carries none, the session-start and
+Stop hooks take it from the title of the branch's open PR and keep it in git config (`branch.<name>.moderatorIssue`),
+where every hook after reads it. A title naming several issues, several open PRs for the branch, or a failed lookup
+sets none. With no issue, the Stop hook commits nothing and holds the turn once per session to say the task has no
+issue and what the PR lookup found. GitHub is read with `gh api` (REST): a cloud session cannot reach the GraphQL API that `gh pr view` uses.
+The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, `running.json`, the gate's results and logs.
+
+`running.json` lists the units of the current session. SubagentStop takes a unit out of every ledger that holds it,
+the main checkout's included when the unit worked in its own worktree. An entry of another session, or one older than
+a day, is dropped at session start and at the next unit start, and never counted as running; an entry with no
+session (written by an earlier client) is judged by its age alone.
+
+The gate's tree hash is the id of the tree `git add -A` would commit (untracked files that are not ignored included,
+`.work/` left out), so a gate run before `git add` matches the commit that follows it.
 
 ### Sessions with more than one repository
 
@@ -74,25 +102,26 @@ and `moderator hook` gets `--repo`, so a session working in the other repository
 cd /home/user/<repo> && pnpm install --frozen-lockfile && pnpm exec moderator user-hooks
 ```
 
-## Skills and agents
+## Skills, agents and the launcher
 
-The protocol's skills (`delegate`, `handoff`, `unit-protocol`, `papercut`) and agents (`unit`, `unit-deep`,
-`reviewer`, `Explore`) ship in `claude/`. Cloud sessions load a repository's own `.claude/skills` and `.claude/agents`,
-and a plugin reaches them only through an organization's managed settings (Team and Enterprise plans), so the files are
-copied in:
+The protocol's skills (`delegate`, `handoff`, `unit-protocol`, `papercut`), agents (`unit`, `unit-deep`,
+`reviewer`, `Explore`) and the session-start launcher (`hooks/moderator-session-start.sh`) ship in `claude/`. Cloud
+sessions load a repository's own `.claude/skills` and `.claude/agents`, a plugin reaches them only through an
+organization's managed settings (Team and Enterprise plans), and the launcher must be there before the client is
+installed, so the files are copied in:
 
 ```sh
 moderator sync           # writes them into .claude/; commit the result
 moderator sync --check   # exits 1 when a copy is missing or differs from the pinned version (run it in CI)
 ```
 
-Change a skill or agent here, never in a repository's copy. The repository keeps its own `repo-map` skill, which the
+Change a skill, agent or the launcher here, never in a repository's copy. The repository keeps its own `repo-map` skill, which the
 unit agents preload. List `.claude/**` in `protectedPaths` so no subagent edits the copies.
 
 ## Commands
 
 `moderator help` lists them: `scope`, `gate`, `risk`, `pick`, `handback`, `handoff`, `orient`, `papercut`,
-`unit-watch`, `sync`, `linear issue | update | comment`, `push-main` and `user-hooks`.
+`unit-watch`, `sync`, `linear issue | update | comment`, `push-main`, `user-hooks` and `ready`.
 
 A Linear write goes through the service, which asks Jev whether it is a product-level write. When Jev refuses or
 does not answer, nothing is written and the command exits 3; the agent then uses the Linear connector's own tool,

@@ -154,3 +154,29 @@ export const spawnUnit = (toolId, agentId, type = 'unit') => [
   { timestamp: new Date().toISOString(), message: { content: [{ type: 'tool_use', id: toolId, name: 'Agent', input: { subagent_type: type, description: `job ${agentId}` } }] } },
   { timestamp: new Date().toISOString(), message: { content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text: `Async agent launched.\nagentId: ${agentId} (internal ID)` }] }] } },
 ];
+
+/**
+ * A fake `gh`, first on PATH in the returned environment: `gh api <route>` prints routes[route] as JSON, any other
+ * route fails as GitHub's 404, and every other command fails as GraphQL does in a Claude Code cloud session.
+ * @param {string} dir
+ * @param {Record<string, unknown>} routes
+ */
+export function fakeGh(dir, routes) {
+  const bin = path.join(dir, 'fake-bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'routes.json'), JSON.stringify(routes));
+  fs.writeFileSync(
+    path.join(bin, 'gh'),
+    `#!/usr/bin/env node
+const routes = JSON.parse(require('node:fs').readFileSync(${JSON.stringify(path.join(bin, 'routes.json'))}, 'utf8'));
+const [cmd, route] = process.argv.slice(2);
+if (cmd === 'api' && Object.hasOwn(routes, route)) process.stdout.write(JSON.stringify(routes[route]));
+else {
+  process.stderr.write(cmd === 'api' ? 'gh: Not Found (HTTP 404)\\n' : 'HTTP 403: GitHub GraphQL is not available from Claude Code sessions\\n');
+  process.exitCode = 1;
+}
+`,
+    { mode: 0o755 },
+  );
+  return { PATH: `${bin}:${process.env.PATH}` };
+}
