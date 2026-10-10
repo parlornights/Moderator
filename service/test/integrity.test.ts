@@ -387,6 +387,187 @@ describe('decisions belong to one PR and base', () => {
   });
 });
 
+describe('PR comments ping the owner once per set of pending findings', () => {
+  const work: ChangedFile = { filename: '.work/notes.md', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' };
+
+  it('posts one comment and two check runs for two pushes with the same pending findings', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('p1'));
+    files = [changed, work];
+    await hook(event('p2'));
+    expect(comments).toHaveLength(1);
+    expect(comments[0].body).toContain('on p1');
+    const failed = checks.filter((c) => c.check.conclusion === 'action_required');
+    expect(failed.map((c) => c.sha)).toEqual(['p1', 'p2']);
+    expect(failed[1].check).toMatchObject({ title: "1 test change(s) need the owner's decision", detailsUrl: 'https://moderator.parlornights.com/approve/parlornights/CrookedDuke/42/p2' });
+  });
+
+  it('comments again, saying what changed, when a push adds a flagged hunk', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('p3'));
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    files = [changed, other];
+    await hook(event('p4'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('@pr-author **test-integrity** on p4');
+    expect(comments[1].body).toContain('Changed since p3: 1 new or changed (`src/rules.spec.ts`)');
+    expect(comments[1].body).toContain('https://moderator.parlornights.com/approve/parlornights/CrookedDuke/42/p4');
+    // Then the same set again: quiet.
+    await hook(event('p5'));
+    expect(comments).toHaveLength(2);
+    expect(checks.at(-1)).toMatchObject({ sha: 'p5', check: { conclusion: 'action_required' } });
+  });
+
+  it('comments as before on a push after an approval', async () => {
+    const blind: ChangedFile = { filename: 'e2e/fixtures.e2e.ts', status: 'modified', baseSha: 'big1' };
+    files = [blind];
+    await hook(event('p6'));
+    await decide('p6', 'decision=approve');
+    // Never carried, so asked again with the same findings: the approval came between, so the owner is pinged.
+    files = [blind, work];
+    await hook(event('p7'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('on p7');
+    expect(comments[1].body).not.toContain('Changed since');
+    expect(checks.at(-1)).toMatchObject({ sha: 'p7', check: { conclusion: 'action_required' } });
+  });
+
+  it('comments again after a rejection of the commit just before', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('p8'));
+    await decide('p8', 'decision=reject&reason=no');
+    files = [changed, work];
+    await hook(event('p9'));
+    expect(comments.filter((c) => c.body.includes('**test-integrity** on'))).toHaveLength(2);
+  });
+
+  it('comments after a decision on an older commit, though the latest earlier run was quiet', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('q1'));
+    files = [changed, work];
+    await hook(event('q2'));
+    expect(comments).toHaveLength(1);
+    await decide('q1', 'decision=reject');
+    await hook(event('q3'));
+    expect(comments.at(-1)!.body).toContain('**test-integrity** on q3');
+  });
+
+  it('comments after an approval of an older commit with a blind file, though the latest earlier run was quiet', async () => {
+    const blind: ChangedFile = { filename: 'e2e/fixtures.e2e.ts', status: 'modified', baseSha: 'big1' };
+    files = [blind];
+    await hook(event('r1'));
+    await hook(event('r2'));
+    // A blind file pings on every undecided push.
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('Changed since r1: 1 new or changed (`e2e/fixtures.e2e.ts`).');
+    await decide('r1', 'decision=approve');
+    const n = comments.length;
+    await hook(event('r3'));
+    expect(comments).toHaveLength(n + 1);
+    expect(comments.at(-1)!.body).toContain('on r3');
+    expect(checks.at(-1)).toMatchObject({ sha: 'r3', check: { conclusion: 'action_required' } });
+  });
+
+  it('comments when a push only removes findings, and stays quiet when the same findings come in another order', async () => {
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    files = [changed, other];
+    answers = { h1: { noul: 0.1 }, h2: { noul: 0.1 } };
+    await hook(event('o1'));
+    files = [other, changed];
+    await hook(event('o2'));
+    expect(comments).toHaveLength(1);
+    files = [changed];
+    await hook(event('o3'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('Changed since o2: 1 no longer flagged');
+  });
+
+  it('counts a repeated identical hunk as another finding', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('d1'));
+    files = [{ ...changed, patch: `${changed.patch}\n@@ -9 +9 @@\n-  expect(total).toBe(120);\n+  expect(total).toBeGreaterThan(0);` }];
+    await hook(event('d2'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('Changed since d1: 1 new or changed');
+  });
+
+  it('comments when a file with no patch changes its blob, its blob at the merge base, or its status', async () => {
+    const renamed: ChangedFile = { filename: 'infra/a.test.mjs', previousFilename: 'infra/b.test.mjs', status: 'renamed', sha: 'blob1', baseSha: 'blob1' };
+    files = [renamed];
+    await hook(event('b1'));
+    await hook(event('b2'));
+    expect(comments).toHaveLength(1);
+    for (const [sha, f] of [['b3', { ...renamed, sha: 'blob2' }], ['b4', { ...renamed, sha: 'blob2', baseSha: 'blob0' }], ['b5', { ...renamed, sha: 'blob2', baseSha: 'blob0', status: 'modified' }]] as const) {
+      files = [f];
+      await hook(event(sha));
+      expect(comments.at(-1)!.body).toContain(`on ${sha}`);
+    }
+    expect(comments).toHaveLength(4);
+  });
+
+  it('comments when the earlier run never finished', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('w1'));
+    await env.DB.exec("UPDATE integrity SET state = 'pending' WHERE sha = 'w1'");
+    await hook(event('w2'));
+    expect(comments).toHaveLength(2);
+  });
+
+  it('pings for a blind file in a folder whose name starts with a parenthesis', async () => {
+    files = [{ filename: '(app)/x.test.ts', status: 'modified', baseSha: 'x1' }];
+    await hook(event('y1'));
+    await hook(event('y2'));
+    expect(comments).toHaveLength(2);
+  });
+
+  it('forgets that a commit was announced when it runs again with other findings', async () => {
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('g1'));
+    await hook(event('g2'));
+    expect(comments).toHaveLength(1);
+    // g2 runs again with another flagged hunk, and its comment fails to post.
+    files = [changed, other];
+    answers = { h1: { noul: 0.1 } };
+    const comment = gh.comment;
+    gh.comment = async () => {
+      throw new Error('GitHub is down');
+    };
+    try {
+      await hook(event('g2', 'reopened'));
+    } finally {
+      gh.comment = comment;
+    }
+    await hook(event('g3'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('on g3');
+  });
+
+  it('comments again when the earlier comment failed to post', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    const comment = gh.comment;
+    gh.comment = async () => {
+      throw new Error('GitHub is down');
+    };
+    try {
+      await hook(event('f1'));
+    } finally {
+      gh.comment = comment;
+    }
+    await hook(event('f2'));
+    await hook(event('f3'));
+    expect(comments.map((c) => c.body.match(/on (\w+)/)![1])).toEqual(['f2']);
+  });
+});
+
 describe('workStart', () => {
   it('is the earliest of the PR creation and every commit date', () => {
     expect(workStart(event('w1'), ['2026-10-08T13:00:00Z', '2026-10-07T08:00:00Z', 'not a date'])).toEqual(new Date('2026-10-07T08:00:00Z'));
