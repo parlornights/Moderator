@@ -50,3 +50,5 @@ A stop hook checks all of this, re-runs the gate, and when Jev is configured ask
 ## Never
 
 Push to main. Force push. Edit the repo's protected paths (`protectedPaths` in `moderator.config.json`). Post to Linear. Spawn a second reviewer to get a kinder one.
+
+A test asserts correct behaviour and is never altered to pass buggy behaviour; a failing test means fix the code, or prove the test wrong, never loosen, skip or re-baseline it to get green.
