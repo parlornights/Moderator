@@ -52,6 +52,9 @@ directly. The contract:
 - The repository installs the client in its own SessionStart hook or setup script, as it installs everything else.
 - The launcher waits until the client loads (`moderator ready`), at most `MODERATOR_INSTALL_WAIT` seconds (120 by
   default), then runs `moderator hook session-start` with the hook's input. Keep the hook's `timeout` above the wait.
+- At startup it also waits while `node_modules/.pnpm/lock.yaml` (the lockfile pnpm installed) differs from
+  `pnpm-lock.yaml`, so a cached environment's older client never runs first. The repository's install step must
+  reinstall in that case; if none comes within the wait, the installed client runs.
 - When the client does not load in time, the session starts without its start context, and the user is told so in one
   line; `moderator orient` prints it once the client is installed.
 

@@ -137,7 +137,7 @@ test("orient lists only this session's units started within a day, and a session
  * @param {Record<string, string>} extra
  * @param {() => void} [whileRunning]
  */
-function launch(dir, extra, whileRunning = () => {}) {
+function launch(dir, extra, whileRunning = () => {}, source = 'startup') {
   return new Promise((resolve) => {
     const child = spawn('bash', [`${dir}/.claude/hooks/moderator-session-start.sh`], { cwd: dir, env: env({ CLAUDE_PROJECT_DIR: dir, ...extra }) });
     let stdout = '';
@@ -145,7 +145,7 @@ function launch(dir, extra, whileRunning = () => {}) {
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
     child.on('close', (status) => resolve({ status, stdout, stderr }));
-    child.stdin.end(JSON.stringify({ cwd: dir, source: 'startup', session_id: 's1' }));
+    child.stdin.end(JSON.stringify({ cwd: dir, source, session_id: 's1' }));
     whileRunning();
   });
 }
@@ -170,4 +170,44 @@ test('a client that never installs costs the session its start context, said in 
   const out = /** @type {any} */ (await launch(r.dir, { MODERATOR_INSTALL_WAIT: '1' }));
   assert.equal(out.status, 0);
   assert.match(JSON.parse(out.stdout).systemMessage, /the client did not load within 1 s of the session start \(Error: Cannot find module '[^']*moderator\.js'\)/);
+});
+
+/** @param {string} dir @param {string} installed @param {string} lock */
+function installedFrom(dir, installed, lock) {
+  fs.mkdirSync(`${dir}/node_modules/.pnpm`, { recursive: true });
+  fs.mkdirSync(`${dir}/node_modules/@parlornights`, { recursive: true });
+  if (!fs.existsSync(`${dir}/node_modules/@parlornights/moderator`)) fs.symlinkSync(CLIENT, `${dir}/node_modules/@parlornights/moderator`);
+  fs.writeFileSync(`${dir}/node_modules/.pnpm/lock.yaml`, installed);
+  fs.writeFileSync(`${dir}/pnpm-lock.yaml`, lock);
+}
+
+test('at startup, a client installed from another lockfile waits for the reinstall before the start context', async () => {
+  const r = repo({ branch: 'cd-11-x' });
+  await cli(['sync'], { cwd: r.dir });
+  installedFrom(r.dir, 'old\n', 'new\n');
+  const t0 = Date.now();
+  const reinstall = () => setTimeout(() => fs.writeFileSync(`${r.dir}/node_modules/.pnpm/lock.yaml`, 'new\n'), 1500);
+  const out = /** @type {any} */ (await launch(r.dir, {}, reinstall));
+  assert.equal(out.status, 0, out.stderr);
+  assert.ok(Date.now() - t0 >= 1400, 'ran before the reinstall');
+  assert.match(JSON.parse(out.stdout).hookSpecificOutput.additionalContext, /issue CD-11/);
+});
+
+test('a reinstall that never comes: the installed client still gives the start context after the wait', async () => {
+  const r = repo({ branch: 'cd-12-x' });
+  await cli(['sync'], { cwd: r.dir });
+  installedFrom(r.dir, 'old\n', 'new\n');
+  const out = /** @type {any} */ (await launch(r.dir, { MODERATOR_INSTALL_WAIT: '1' }));
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).hookSpecificOutput.additionalContext, /issue CD-12/);
+});
+
+test('after a compaction, a lockfile that differs (another branch checked out) costs no wait', async () => {
+  const r = repo({ branch: 'cd-13-x' });
+  await cli(['sync'], { cwd: r.dir });
+  installedFrom(r.dir, 'old\n', 'new\n');
+  const t0 = Date.now();
+  const out = /** @type {any} */ (await launch(r.dir, { MODERATOR_INSTALL_WAIT: '5' }, () => {}, 'compact'));
+  assert.equal(out.status, 0, out.stderr);
+  assert.ok(Date.now() - t0 < 4000, 'waited on the lockfile after a compaction');
 });
