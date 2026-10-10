@@ -16,7 +16,8 @@ const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 /** One exec-form argument as a double-quoted shell word, with `${CLAUDE_PROJECT_DIR}` left to the shell. @param {string} a */
 const word = (a) => `"${a.split('${CLAUDE_PROJECT_DIR}').map((p) => p.replace(/[\\"$`]/g, '\\$&')).join('${CLAUDE_PROJECT_DIR}')}"`;
 
-const MODERATOR_HOOK = /\bmoderator(?:\.js)?['"]?\s+['"]?hook['"]?\s+['"]?[\w-]+['"]?/;
+/** `moderator hook <name>`, or the session-start launcher `moderator sync` writes, which hands its arguments on. */
+const MODERATOR_HOOK = /\bmoderator(?:\.js)?['"]?\s+['"]?hook['"]?\s+['"]?[\w-]+['"]?|\bmoderator-session-start\.sh['"]?/;
 
 /** @param {string} repo */
 const marker = (repo) => `${MARK} ${quote(repo)}`;

@@ -51,6 +51,8 @@ test('moderator hooks get --repo in exec and shell form; arguments keep the proj
   assert.ok(exec.includes(`"node" "\${CLAUDE_PROJECT_DIR}/x/bin/moderator.js" "hook" "stop" --repo '${r.dir}'`), exec);
   const shell = userCommand({ command: 'pnpm exec moderator hook pre-compact' }, r.dir);
   assert.ok(shell.includes(`moderator hook pre-compact --repo '${r.dir}'`), shell);
+  const launcher = userCommand({ command: 'bash', args: ['${CLAUDE_PROJECT_DIR}/.claude/hooks/moderator-session-start.sh'] }, r.dir);
+  assert.ok(launcher.includes(`"bash" "\${CLAUDE_PROJECT_DIR}/.claude/hooks/moderator-session-start.sh" --repo '${r.dir}'`), launcher);
   assert.throws(() => userCommand({ command: 'x' }, "/tmp/it's"), /quote or a newline/);
 });
 

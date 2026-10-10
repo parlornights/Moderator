@@ -11,7 +11,7 @@ test('sync writes every skill and agent; check passes on a fresh copy and fails 
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /\.claude\/agents\/unit\.md: missing/);
   const wrote = await cli(['sync'], { cwd: r.dir });
-  for (const f of ['skills/delegate/SKILL.md', 'skills/handoff/SKILL.md', 'skills/unit-protocol/SKILL.md', 'skills/papercut/SKILL.md', 'agents/unit.md', 'agents/unit-deep.md', 'agents/reviewer.md', 'agents/Explore.md']) {
+  for (const f of ['skills/delegate/SKILL.md', 'skills/handoff/SKILL.md', 'skills/unit-protocol/SKILL.md', 'skills/papercut/SKILL.md', 'agents/unit.md', 'agents/unit-deep.md', 'agents/reviewer.md', 'agents/Explore.md', 'hooks/moderator-session-start.sh']) {
     assert.match(wrote.stdout, new RegExp(`wrote \\.claude/${f.replace('.', '\\.')}`), f);
   }
   assert.equal((await cli(['sync', '--check'], { cwd: r.dir })).status, 0);
@@ -27,4 +27,13 @@ test('the shipped protocol names no project: no CrookedDuke paths, commands or i
     const text = fs.readFileSync(new URL(f, dir), 'utf8');
     assert.doesNotMatch(text, /harness\/|pnpm (gate|risk|pick|papercut|handoff)|\bCD-\d+|@wg\/|Mergify|ARCHITECTURE/, f);
   }
+});
+
+test('the wiring in the README starts the session through the launcher, and runs every node hook with the proxy warning off', () => {
+  const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const hooks = JSON.parse(/** @type {string} */ (readme.match(/```json\n(\{\n {2}"hooks"[\s\S]*?)\n```/)?.[1])).hooks;
+  const all = Object.values(hooks).flatMap((entries) => entries.flatMap((e) => e.hooks));
+  assert.deepEqual(hooks.SessionStart[0].hooks[0].args, ['${CLAUDE_PROJECT_DIR}/.claude/hooks/moderator-session-start.sh']);
+  for (const h of all.filter((x) => x.command === 'node')) assert.equal(h.args[0], '--disable-warning=UNDICI-EHPA', h.args.join(' '));
+  assert.equal(all.filter((x) => x.command === 'node').length, all.length - 1);
 });

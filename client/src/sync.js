@@ -1,6 +1,7 @@
-// The protocol's skills and agents, shipped in this package's claude/ and copied into a repo's .claude/: cloud
-// sessions load a repo's own .claude/skills and .claude/agents, and no plugin reaches them without an organization's
-// managed settings. `check` finds a copy that drifted from the pinned version, so CI can fail on it.
+// The protocol's skills and agents, and the session-start launcher, shipped in this package's claude/ and copied into a
+// repo's .claude/: cloud sessions load a repo's own .claude/skills and .claude/agents, and no plugin reaches them without
+// an organization's managed settings; the launcher must be there before the client is installed. `check` finds a copy
+// that drifted from the pinned version, so CI can fail on it.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +11,7 @@ import { root } from './git.js';
 
 const SOURCE = fileURLToPath(new URL('../claude/', import.meta.url));
 
-/** Every shipped file, relative to claude/ (skills/<name>/SKILL.md, agents/<name>.md), sorted. */
+/** Every shipped file, relative to claude/ (skills/<name>/SKILL.md, agents/<name>.md, hooks/<name>.sh), sorted. */
 export function shipped() {
   return fs.readdirSync(SOURCE, { recursive: true, encoding: 'utf8' }).filter((f) => fs.statSync(path.join(SOURCE, f)).isFile()).sort();
 }

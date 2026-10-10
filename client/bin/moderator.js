@@ -27,7 +27,11 @@ const HELP = `moderator <command>
                                                 Moderator: merge origin/main first; anything else needs a pull request
   user-hooks                                    copy this repo's hooks into ~/.claude/settings.json, so they keep firing
                                                 when the session's project is not the repo (the environment's setup script)
-  hook <name> [--repo <dir>]                    a Claude Code hook (reads its JSON on stdin)`;
+  hook <name> [--repo <dir>]                    a Claude Code hook (reads its JSON on stdin)
+  ready                                         exit 0 once the client and its dependencies load (the session-start
+                                                launcher waits on it while the repo's install runs)`;
+
+const HOOKS = ['session-start', 'stop', 'subagent-start', 'subagent-stop', 'pre-compact', 'guard', 'post-edit', 'post-artifact', 'context-watch'];
 
 /**
  * @template {import('node:util').ParseArgsOptionsConfig} T
@@ -207,11 +211,14 @@ const commands = {
     console.log(n ? `${n} user-level hooks for ${root()} in ~/.claude/settings.json` : `no hooks in ${root()}/.claude/settings.json; no copy left in ~/.claude/settings.json`);
   },
 
+  async ready() {
+    for (const name of HOOKS) await import(`../src/hooks/${name}.js`);
+  },
+
   async hook(args) {
     const { values, positionals } = opts(args, { repo: { type: 'string' } });
     const [name] = positionals;
-    const hooks = ['session-start', 'stop', 'subagent-start', 'subagent-stop', 'pre-compact', 'guard', 'post-edit', 'post-artifact', 'context-watch'];
-    if (!hooks.includes(name)) throw new Error(`hook needs one of ${hooks.join(', ')}`);
+    if (!HOOKS.includes(name)) throw new Error(`hook needs one of ${HOOKS.join(', ')}`);
     let input = {};
     try {
       input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');

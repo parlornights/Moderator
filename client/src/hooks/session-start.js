@@ -11,7 +11,7 @@ import { root } from '../git.js';
 import { writeHandoff } from '../handoff.js';
 import { fitSessionContext, orient } from '../orient.js';
 import { papercutPointer } from '../papercut.js';
-import { appendEvent, issueId } from '../work.js';
+import { appendEvent, issueId, runningUnits } from '../work.js';
 
 import { context } from './io.js';
 
@@ -30,6 +30,8 @@ export default async function sessionStart(input) {
   const issue = issueId();
   if (issue && source === 'compact') writeHandoff({ transcriptPath: input.transcript_path, source: 'compact' });
   if (issue) appendEvent('session-start', { source, session: input.session_id || null });
+  // Units of an earlier session are gone with it; their stops went unrecorded.
+  runningUnits({ session: input.session_id || null, prune: true });
 
   const tail = [];
   if (issue && source !== 'compact') {
@@ -43,7 +45,7 @@ export default async function sessionStart(input) {
       /* left out */
     }
   }
-  const text = fitSessionContext({ head: fs.readFileSync(ROLE, 'utf8').trim(), middle: orient({ source }), tail: tail.filter(Boolean).join('\n\n') });
+  const text = fitSessionContext({ head: fs.readFileSync(ROLE, 'utf8').trim(), middle: orient({ source, session: input.session_id || null }), tail: tail.filter(Boolean).join('\n\n') });
   const extra = ['startup', 'resume', 'fork'].includes(source) && !input.session_title && issue ? { sessionTitle: issue } : {};
   return context('SessionStart', text, extra);
 }

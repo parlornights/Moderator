@@ -91,8 +91,19 @@ test("the unit's papercuts go into the log, by category", async () => {
   assert.match(log, /\| CD-1 \| protocol \| the brief lacked the design link/);
 });
 
-test('a malformed hook input never traps a unit', async () => {
-  const { stop } = await setup();
+test('a stop with no last message goes through, and the unit is no longer running', async () => {
+  const { r, stop, events } = await setup();
   assert.equal(await stop(undefined), null);
-  assert.equal(fs.existsSync(path.join(process.cwd(), 'never')), false);
+  assert.deepEqual(JSON.parse(r.read('.work/CD-1/running.json')), {});
+  assert.deepEqual(events(), ['unit:stop']);
+});
+
+test("a unit that worked in its own worktree stops out of the session's running.json, and its event lands there", async () => {
+  const { r, events } = await setup();
+  const wt = path.join(r.scratch, 'wt');
+  r.git('worktree', 'add', '-q', '-b', 'worktree-agent-u1', wt);
+  const out = await hook('subagent-stop', { agent_id: 'u1', agent_type: 'moderator:unit', last_assistant_message: 'BLOCKED: no access to the staging database' }, { cwd: wt });
+  assert.equal(out.json, null, out.stderr);
+  assert.deepEqual(JSON.parse(r.read('.work/CD-1/running.json')), {});
+  assert.deepEqual(events(), ['unit:escalate-blocked']);
 });

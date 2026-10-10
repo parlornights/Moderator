@@ -1,4 +1,5 @@
-// Stop (the main session), on a branch that names an issue:
+// Stop (the main session), on a branch whose name or open PR's title names an issue (a branch that names none blocks
+// once per session, saying the task has no issue, and is left as it is):
 //   1. commit whatever is uncommitted (code and .work/) as a checkpoint, unless a unit is still editing this checkout;
 //   2. block once for what is left to do: units without a check-in or a watched PR, open questions that are not
 //      whole or not repeated (judged by Jev), a stale handoff note, the issue never read on Linear, an artifact not
@@ -7,14 +8,11 @@
 // On main it does nothing. It never blocks twice in a row (stop_hook_active), and never blocks on Jev: when Jev does
 // not answer it says the check did not run.
 
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { jev } from '../api.js';
 import { branch, git, isMainBranch } from '../git.js';
 import { contextHandoffDue, handedOver, linearGaps, section, staleness, unlinkedArtifacts, writeHandoff } from '../handoff.js';
 import { alive, approvalTodos, unitTodos, watch } from '../units.js';
-import { appendEvent, issueId, workDir } from '../work.js';
+import { appendEvent, issueFromPr, issueId, issuePattern, runningUnits } from '../work.js';
 
 import { block } from './io.js';
 
@@ -54,11 +52,29 @@ async function questionCheck(last) {
   return { ran: true, asking: Boolean(r.asking), todo };
 }
 
+/**
+ * Neither the branch nor its open PR names an issue: nothing is committed or pushed, and the session is told once, so
+ * a task never goes on without its ledger unnoticed. Git config keeps which session was told.
+ * @param {string} b
+ * @param {any} input
+ */
+function noIssue(b, input) {
+  if (input.stop_hook_active) return;
+  const key = `branch.${b}.moderatorNoIssueSession`;
+  const session = String(input.session_id || 'unknown');
+  if (git(['config', '--get', key]) === session) return;
+  git(['config', key, session]);
+  return block(
+    `This task has no issue: neither the branch "${b}" nor an open PR's title names one (${issuePattern()?.source}), so the Stop hook commits, pushes and checks nothing here. Put the issue id in the branch name (git branch -m) or in the PR's title; file the issue first with \`moderator linear issue\` if there is none. Then stop again.`,
+  );
+}
+
 /** @param {any} input */
 export default async function stop(input) {
   const b = branch();
-  const issue = issueId();
-  if (isMainBranch(b) || !issue) return;
+  if (isMainBranch(b) || !issuePattern()) return;
+  const issue = issueId() || issueFromPr();
+  if (!issue) return noIssue(b, input);
   // The agent stopped in the middle of a merge (to ask about a conflict, say): the checks run, but nothing is
   // committed or pushed until the merge ends, so no conflict marker leaves the machine.
   const midMerge = operationInProgress();
@@ -76,15 +92,7 @@ export default async function stop(input) {
   }
 
   // A unit still editing this checkout (no worktree of its own): leave the index alone, ask only about the units.
-  let running = 0;
-  if (session) running = session.units.filter((u) => alive(u) && !u.worktree).length;
-  else {
-    try {
-      running = Object.keys(JSON.parse(fs.readFileSync(path.join(workDir(), 'running.json'), 'utf8'))).length;
-    } catch {
-      /* none */
-    }
-  }
+  const running = session ? session.units.filter((u) => alive(u) && !u.worktree).length : Object.keys(runningUnits({ session: input.session_id || null })).length;
   if (running > 0) return unitTodo.length ? block(`Before stopping (units):\n- ${unitTodo.join('\n- ')}\nThen stop again.`) : undefined;
 
   if (!midMerge) {

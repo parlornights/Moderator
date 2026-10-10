@@ -51,6 +51,21 @@ test('done needs a green gate on this very tree', async () => {
   assert.match(checkHandback(handback()).errors.join(), /the tree changed after the last green gate/);
 });
 
+test('a gate run before `git add` holds for the commit that follows it: untracked files are in the tree hash', async () => {
+  const r = repo({ branch: 'cd-1-x', config: CONFIG });
+  process.chdir(r.dir);
+  r.put('a.js', 'x');
+  r.put('.gitignore', 'build/\n');
+  await cli(['gate'], { cwd: r.dir });
+  r.put('build/out.js', 'ignored, never committed');
+  r.git('add', '-A');
+  r.git('commit', '-qm', 'a');
+  const committed = checkHandback(handback());
+  assert.equal(committed.ok, true, committed.errors.join());
+  r.put('b.js', 'new and untracked');
+  assert.match(checkHandback(handback()).errors.join(), /the tree changed after the last green gate/);
+});
+
 test("the task's own ledger never counts toward the risk, even with no ignore rule", () => {
   const r = repo({ branch: 'cd-3-x', config: { issuePattern: '\\bCD-\\d+\\b', lintExtensions: ['.js'], risk: { linesHigh: 50, filesHigh: 3 } } });
   process.chdir(r.dir);

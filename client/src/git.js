@@ -23,11 +23,12 @@ export function root() {
  * Run git and return its trimmed stdout, or null on any error.
  * @param {string[]} args
  * @param {string} [cwd]
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {string | null}
  */
-export function git(args, cwd = root()) {
+export function git(args, cwd = root(), env = process.env) {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 }).trim();
+    return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 }).trim();
   } catch {
     return null;
   }

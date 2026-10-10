@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { CONFIG, fakeModerator, hook, repo, spawnUnit, toolUse, transcript } from './helpers.js';
+import { CONFIG, fakeGh, fakeModerator, hook, repo, spawnUnit, toolUse, transcript } from './helpers.js';
 
 const NOTE = 'status: in-progress\n\n## Next step\ngo\n\n## Open questions\n\n(none)\n';
 const READ = toolUse('mcp__Linear__get_issue', { id: 'CD-7' });
@@ -127,10 +127,19 @@ test('a unit in its own worktree does not stop the checkpoint, and its todos joi
 
 test('without a readable transcript the hook falls back to running.json', async () => {
   const { r, stop } = await setup();
-  r.put('.work/CD-7/running.json', JSON.stringify({ old: { agent_type: 'unit' } }));
+  r.put('.work/CD-7/running.json', JSON.stringify({ u1: { agent_type: 'unit', started: new Date().toISOString(), session: 's' } }));
   r.put('a.js', 'x');
   await stop({ transcript_path: path.join(r.scratch, 'missing.jsonl') });
   assert.doesNotMatch(r.git('log', '--format=%s'), /checkpoint/);
+});
+
+test("running.json entries of another session, or older than a day, are gone units: they hold nothing", async () => {
+  const { r, stop } = await setup();
+  const dayAgo = new Date(Date.now() - 25 * 3600_000).toISOString();
+  r.put('.work/CD-7/running.json', JSON.stringify({ u0: { agent_type: 'unit', started: new Date().toISOString(), session: 'earlier' }, u1: { agent_type: 'unit', started: dayAgo, session: 's' }, u2: { agent_type: 'unit' } }));
+  r.put('a.js', 'x');
+  await stop({ transcript_path: path.join(r.scratch, 'missing.jsonl'), stop_hook_active: true });
+  assert.match(r.git('log', '--format=%s'), /wip\(CD-7\): checkpoint/);
 });
 
 test('in the middle of a merge it commits and pushes nothing, so no conflict marker leaves the machine', async () => {
@@ -154,11 +163,45 @@ test('in the middle of a merge it commits and pushes nothing, so no conflict mar
   assert.match(r.git('status', '--porcelain'), /^UU a\.js/m);
 });
 
-test('on main, or a branch without an issue, it does nothing', async () => {
-  for (const branch of ['main', 'claude/tidy-up']) {
-    const r = repo({ branch, files: { 'a.js': 'x' } });
-    r.put('b.js', 'y');
-    assert.equal((await hook('stop', { session_id: 's' }, { cwd: r.dir })).json, null);
-    assert.match(r.git('status', '--porcelain'), /b\.js/);
-  }
+test('on main it does nothing', async () => {
+  const r = repo({ branch: 'main', files: { 'a.js': 'x' } });
+  r.put('b.js', 'y');
+  assert.equal((await hook('stop', { session_id: 's' }, { cwd: r.dir })).json, null);
+  assert.match(r.git('status', '--porcelain'), /b\.js/);
+});
+
+/** A branch named without an issue, pushed to a bare remote whose fetch URL is on GitHub, so its PR is looked up. */
+function unnamedBranch() {
+  const r = repo({ branch: 'claude/tidy-up', files: { 'a.js': 'x' }, remote: true });
+  const bare = r.git('remote', 'get-url', 'origin');
+  r.git('remote', 'set-url', 'origin', 'https://github.com/acme/app');
+  r.git('remote', 'set-url', '--push', 'origin', bare);
+  return r;
+}
+const PRS = 'repos/acme/app/pulls?state=open&head=acme%3Aclaude%2Ftidy-up';
+
+test("a branch that names no issue takes it from its open PR's title, and the turn ends committed and pushed", async () => {
+  const r = unnamedBranch();
+  const env = fakeGh(r.scratch, { [PRS]: [{ number: 4, title: 'Tidy up (CD-9)', html_url: 'https://github.com/acme/app/pull/4', draft: false }] });
+  r.put('b.js', 'y');
+  assert.equal((await hook('stop', { session_id: 's', stop_hook_active: true }, { cwd: r.dir, env })).json, null);
+  assert.match(r.git('log', '--format=%s'), /wip\(CD-9\): checkpoint/);
+  assert.equal(r.git('config', '--get', 'branch.claude/tidy-up.moderatorIssue'), 'CD-9');
+  assert.equal(r.remoteHead(), r.git('rev-parse', 'HEAD'));
+  assert.match(r.read('.work/CD-9/events.jsonl'), /"kind":"stop"/);
+});
+
+test('with no issue in the branch or a PR title, the stop is held once per session to say so, and nothing is committed', async () => {
+  const r = unnamedBranch();
+  const env = fakeGh(r.scratch, { [PRS]: [{ number: 4, title: 'Tidy up', html_url: 'https://github.com/acme/app/pull/4', draft: false }] });
+  r.put('b.js', 'y');
+  const stop = async (input) => (await hook('stop', input, { cwd: r.dir, env })).json;
+  const first = await stop({ session_id: 's' });
+  assert.equal(first.decision, 'block');
+  assert.match(first.reason, /This task has no issue: neither the branch "claude\/tidy-up" nor an open PR's title names one/);
+  assert.equal(await stop({ session_id: 's', stop_hook_active: true }), null);
+  assert.equal(await stop({ session_id: 's' }), null, 'once per session');
+  assert.equal((await stop({ session_id: 's2' })).decision, 'block');
+  assert.match(r.git('status', '--porcelain'), /b\.js/);
+  assert.equal(fs.existsSync(path.join(r.dir, '.work')), false);
 });

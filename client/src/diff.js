@@ -2,6 +2,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { git, root } from './git.js';
@@ -86,13 +87,20 @@ export function packageOf(file) {
 }
 
 /**
- * A short hash of the working tree: HEAD, the diff against it and the untracked files. Same tree, same hash.
- * .work/ is left out, so the gate's own logs and events never invalidate a green result.
+ * A short hash of the working tree: the id of the tree `git add -A` would commit (untracked files that are not
+ * ignored included), built in a scratch copy of the index so the real one is untouched. Same tree, same hash, before
+ * the commit and after it. .work/ is left out, so the gate's own logs and events never invalidate a green result.
  */
 export function treeHash() {
-  const h = crypto.createHash('sha1');
-  h.update(git(['rev-parse', 'HEAD']) || '');
-  h.update(git(['diff', 'HEAD', '--binary', ...NOT_WORK]) || '');
-  for (const f of untracked()) h.update(`${f}:${git(['hash-object', '--', f]) || ''}`);
-  return h.digest('hex').slice(0, 12);
+  const index = git(['rev-parse', '--path-format=absolute', '--git-path', 'index']);
+  const scratch = path.join(os.tmpdir(), `moderator-index-${process.pid}-${crypto.randomUUID()}`);
+  try {
+    if (index && fs.existsSync(index)) fs.copyFileSync(index, scratch);
+    const env = { ...process.env, GIT_INDEX_FILE: scratch };
+    git(['add', '-A', ...NOT_WORK], root(), env);
+    git(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', '.work'], root(), env);
+    return (git(['write-tree'], root(), env) || '').slice(0, 12);
+  } finally {
+    fs.rmSync(scratch, { force: true });
+  }
 }
