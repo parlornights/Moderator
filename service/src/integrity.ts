@@ -193,8 +193,34 @@ async function publish(env: Env, gh: GitHub, e: PullRequestEvent, run: Run): Pro
   if (row) await gh.setCheck(e.installation.id, owner, repo, k.sha, checkFor(env, row));
   if (!changed || run.state === 'pending') return;
   await audit.record(env.DB, { action: `github/${CONTEXT}`, input: { ...k, base: e.pull_request.base.ref, issue: run.issue }, jev: run.findings, outcome: run.state, response: { result: run.result } });
-  if (run.state === 'failure')
-    await commentSafely(gh, e.installation.id, owner, repo, k.pr, `@${e.pull_request.user.login} **test-integrity** on ${short(k.sha)}: ${run.result}.\n\n${summary(run.findings)}\n\nApprove or reject: ${approveUrl(env, k)}`);
+  if (run.state !== 'failure') return;
+  const since = await changedSince(env, e, run.findings);
+  if (since === '') return;
+  await commentSafely(gh, e.installation.id, owner, repo, k.pr, `@${e.pull_request.user.login} **test-integrity** on ${short(k.sha)}: ${run.result}.${since ?? ''}\n\n${summary(run.findings)}\n\nApprove or reject: ${approveUrl(env, k)}`);
+}
+
+/** A finding by its file and hunk hash; one with no patch by its fingerprint and reason. */
+const pendingKey = async (f: Finding) => (f.patch === null ? `${await hunkHash(f)}\n${f.reason}` : hunkHash(f));
+
+/**
+ * What changed in the findings awaiting a decision since the latest earlier run on this PR and base. Empty when that run
+ * also awaits a decision on exactly these findings: its comment already asked, and the check run on this commit still
+ * does, so the owner is not pinged again. Null when there is nothing to compare with, after a decision among others.
+ */
+async function changedSince(env: Env, e: PullRequestEvent, findings: Finding[]): Promise<string | null> {
+  const k = keyOf(e);
+  const earlier = await env.DB.prepare('SELECT sha, state, findings FROM integrity WHERE repo = ? AND pr = ? AND base_ref = ? AND sha != ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+    .bind(k.repo, k.pr, e.pull_request.base.ref, k.sha)
+    .first<{ sha: string; state: string; findings: string }>();
+  if (earlier?.state !== 'failure') return null;
+  const before = new Set(await Promise.all((JSON.parse(earlier.findings) as Finding[]).map(pendingKey)));
+  const now = await Promise.all(findings.map(async (f) => [f, await pendingKey(f)] as const));
+  const added = now.filter(([, key]) => !before.has(key)).map(([f]) => f);
+  const nowKeys = new Set(now.map(([, key]) => key));
+  const gone = [...before].filter((key) => !nowKeys.has(key)).length;
+  if (!added.length && !gone) return '';
+  const files = [...new Set(added.map((f) => `\`${f.file}\``))].join(', ');
+  return `\n\nChanged since ${short(earlier.sha)}: ${[added.length ? `${added.length} new or changed (${files})` : '', gone ? `${gone} no longer flagged` : ''].filter(Boolean).join('; ')}.`;
 }
 
 /** Runs the check for one PR head and posts the `test-integrity` check run. */

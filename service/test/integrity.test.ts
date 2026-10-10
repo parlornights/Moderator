@@ -387,6 +387,54 @@ describe('decisions belong to one PR and base', () => {
   });
 });
 
+describe('PR comments ping the owner once per set of pending findings', () => {
+  const work: ChangedFile = { filename: '.work/notes.md', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' };
+
+  it('posts one comment and two check runs for two pushes with the same pending findings', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('p1'));
+    files = [changed, work];
+    await hook(event('p2'));
+    expect(comments).toHaveLength(1);
+    expect(comments[0].body).toContain('on p1');
+    const failed = checks.filter((c) => c.check.conclusion === 'action_required');
+    expect(failed.map((c) => c.sha)).toEqual(['p1', 'p2']);
+    expect(failed[1].check).toMatchObject({ title: "1 test change(s) need the owner's decision", detailsUrl: 'https://moderator.parlornights.com/approve/parlornights/CrookedDuke/42/p2' });
+  });
+
+  it('comments again, saying what changed, when a push adds a flagged hunk', async () => {
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('p3'));
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    files = [changed, other];
+    await hook(event('p4'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('@pr-author **test-integrity** on p4');
+    expect(comments[1].body).toContain('Changed since p3: 1 new or changed (`src/rules.spec.ts`)');
+    expect(comments[1].body).toContain('https://moderator.parlornights.com/approve/parlornights/CrookedDuke/42/p4');
+    // Then the same set again: quiet.
+    await hook(event('p5'));
+    expect(comments).toHaveLength(2);
+    expect(checks.at(-1)).toMatchObject({ sha: 'p5', check: { conclusion: 'action_required' } });
+  });
+
+  it('comments as before on a push after an approval', async () => {
+    const blind: ChangedFile = { filename: 'e2e/fixtures.e2e.ts', status: 'modified', baseSha: 'big1' };
+    files = [blind];
+    await hook(event('p6'));
+    await decide('p6', 'decision=approve');
+    // Never carried, so asked again with the same findings: the approval came between, so the owner is pinged.
+    files = [blind, work];
+    await hook(event('p7'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('on p7');
+    expect(comments[1].body).not.toContain('Changed since');
+    expect(checks.at(-1)).toMatchObject({ sha: 'p7', check: { conclusion: 'action_required' } });
+  });
+});
+
 describe('workStart', () => {
   it('is the earliest of the PR creation and every commit date', () => {
     expect(workStart(event('w1'), ['2026-10-08T13:00:00Z', '2026-10-07T08:00:00Z', 'not a date'])).toEqual(new Date('2026-10-07T08:00:00Z'));
