@@ -46,7 +46,7 @@ Node 22 or newer. The package is plain JavaScript (type-checked with JSDoc), so 
 | `post-edit` | Runs `lintOnEdit` on the edited file; a failure reaches the agent at once. |
 | `post-artifact` | Records a published Artifact URL; the Stop hook holds the turn until the note ties it to an issue. |
 | `context-watch` | Past the hand-over share of the context window, tells the session once to write the handoff note and stop. |
-| `subagent-start`, `subagent-stop` | A unit may stop only with a valid hand-back on a green gate (with a proof page when the diff touches `proofPaths`), or an escalation; Jev judges a NEEDS DECISION line and the acceptance criteria against the diff. |
+| `subagent-start`, `subagent-stop` | A unit may stop only with a valid hand-back on a green gate (with a `proof` when the diff touches `proofPaths`), or an escalation; Jev judges a NEEDS DECISION line and the acceptance criteria against the diff. |
 | `pre-compact` | Writes and commits the note's auto block before a compaction. |
 | `stop` | Commits a checkpoint, holds the turn once for what is left (units without a check-in, open questions Jev reads as not whole or not repeated, a stale note, the issue not read on Linear, an unlinked artifact, a hand-over due), then pushes the branch. |
 
@@ -142,9 +142,10 @@ Only `issuePattern` is required. A check runs `when` lintable files changed (`fi
 the reviewer: a high path or a large diff asks for opus, and Jev may raise it, never lower it. Jev's own thresholds
 live in the service. `directToMain` lists the paths `moderator push-main` may take to the default branch; an entry
 ending in `/` is a folder, any other entry one file. `proofPaths` lists the paths whose change is visible: when a
-unit's diff against the base touches one, its hand-back's `proof` must be the URL of the Artifact page with the
-screenshots, and a missing, empty or `none: <reason>` proof is refused, naming the matched paths. Without `proofPaths`
-no proof is required.
+unit's diff against the base touches one, a hand-back with a missing or empty `proof` is refused, naming the matched
+paths. `proof` is the URL of the Artifact page with the screenshots, or `none: <reason>` when nothing visible changed
+(a refactor, a hook, a type), and the reviewer judges whether the reason holds. Without `proofPaths` no proof is
+required.
 
 ## Develop
 

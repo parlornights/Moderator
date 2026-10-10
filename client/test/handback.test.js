@@ -93,7 +93,7 @@ test('a sensitive path needs an opus review, new source needs tests, and the iss
   assert.equal(fixed.ok, true, fixed.errors.join());
 });
 
-test('a diff touching proofPaths needs an Artifact URL as "proof"; elsewhere "none: ..." is fine', async () => {
+test('a diff touching proofPaths needs a "proof": an Artifact URL, or "none: <reason>" for the reviewer to judge', async () => {
   const r = repo({ branch: 'cd-5-x', config: { ...CONFIG, proofPaths: ['app/screens/**'] } });
   process.chdir(r.dir);
   r.put('lib/a.js', 'x');
@@ -106,9 +106,10 @@ test('a diff touching proofPaths needs an Artifact URL as "proof"; elsewhere "no
   await cli(['gate'], { cwd: r.dir });
   const missing = checkHandback(handback({ issue: 'CD-5' }));
   assert.equal(missing.ok, false);
-  assert.match(missing.errors.join(), /touches proofPaths \(app\/screens\/Lobby\.js\).*it is missing/);
-  assert.match(checkHandback(handback({ issue: 'CD-5', proof: '' })).errors.join(), /it is missing/);
-  assert.match(checkHandback(handback({ issue: 'CD-5', proof: 'none: nothing visible' })).errors.join(), /touches proofPaths .*"none: nothing visible"/);
+  assert.match(missing.errors.join(), /touches proofPaths \(app\/screens\/Lobby\.js\), so "proof" is required/);
+  assert.match(checkHandback(handback({ issue: 'CD-5', proof: '' })).errors.join(), /"proof" is required/);
+  const refactor = checkHandback(handback({ issue: 'CD-5', proof: 'none: refactor' }));
+  assert.equal(refactor.ok, true, refactor.errors.join());
   const url = checkHandback(handback({ issue: 'CD-5', proof: 'https://claude.ai/artifact/abc' }));
   assert.equal(url.ok, true, url.errors.join());
 });

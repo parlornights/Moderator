@@ -101,9 +101,9 @@ export function checkHandback(text, { base } = {}) {
   const c = requireConfig();
   if (c.proofPaths?.length) {
     const visible = changedFiles(base || c.base).files.filter(matcher(c.proofPaths));
-    if (visible.length && !(typeof hb.proof === 'string' && PROOF_URL.test(hb.proof))) {
+    if (visible.length && !hb.proof) {
       const listed = `${visible.slice(0, 5).join(', ')}${visible.length > 5 ? ` +${visible.length - 5}` : ''}`;
-      errors.push(`the diff touches proofPaths (${listed}), so "proof" must be the URL of the Artifact page with the screenshots (it is ${hb.proof ? JSON.stringify(hb.proof) : 'missing'})`);
+      errors.push(`the diff touches proofPaths (${listed}), so "proof" is required: the URL of the Artifact page with the screenshots, or "none: <reason>" when nothing visible changed`);
     }
   }
   const id = issueId();
