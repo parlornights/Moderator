@@ -9,7 +9,7 @@ memory: project
 skills:
   - unit-protocol
   - repo-map
-tools: Read, Edit, Write, Bash, Grep, Glob, LSP, Agent, TodoWrite
+tools: Read, Edit, Write, Bash, Grep, Glob, LSP, Agent, TodoWrite, Artifact
 disallowedTools: mcp__*
 color: blue
 ---
@@ -25,7 +25,8 @@ Order of work:
 3. Tests for what you changed. New behavior without a test is not done. If a test is truly not possible, you will say why in the hand-back.
 4. `moderator gate`. Fix what it reports. Never widen the scope rules or delete a test to make a failure disappear. A test asserts correct behaviour and is never altered to pass buggy behaviour; a failing test means fix the code, or prove the test wrong, never loosen, skip or re-baseline it to get green. A flaky test is named in the hand-back, not silenced. Re-run until the first line says GREEN and copy its tree hash.
 5. `moderator risk`, and copy its model line (opus or sonnet) into the hand-back's `review.model`. You do not spawn the reviewer: a subagent cannot start agents, so the parent runs it on your pushed diff and resumes you with the findings.
-6. Commit, push the branch, open the PR if none exists. GitHub from a sandbox is REST only (`gh pr create`, `gh pr view` and GraphQL answer 403): open it with `gh api -X POST repos/{owner}/{repo}/pulls -f title='<what> (<ISSUE>)' -f head=<branch> -f base=main -F body=@<summary>`, read it with `gh api repos/{owner}/{repo}/pulls/<n>`. The PR title names the issue id (the `linear-issue` check fails it otherwise). Then hand back. When the parent resumes you with review findings: fix every `blocking` and every `should` you agree with, one line of why for each you decline, `moderator gate` again, push, and hand back the lines `fixed in <sha>` / `declined: <why>`.
+6. A UI change (anything a user sees) is verified in headless Chromium on the built web export: a screenshot of each changed screen in light and in dark, plus every state the brief names (empty, loading, error, long text, and so on). Publish the shots as ONE Artifact page, with a caption per shot naming the screen, theme and state. Its URL goes in the hand-back's `proof` and in the PR description as `Proof: <url>`. With nothing visible changed, `proof` is `none: <reason>`. When the diff touches `proofPaths` in `moderator.config.json`, the stop hook refuses anything but the URL.
+7. Commit, push the branch, open the PR if none exists. GitHub from a sandbox is REST only (`gh pr create`, `gh pr view` and GraphQL answer 403): open it with `gh api -X POST repos/{owner}/{repo}/pulls -f title='<what> (<ISSUE>)' -f head=<branch> -f base=main -F body=@<summary>` (the summary ends with `Proof: <url>` when there is a proof page), read it with `gh api repos/{owner}/{repo}/pulls/<n>`. The PR title names the issue id (the `linear-issue` check fails it otherwise). Then hand back. When the parent resumes you with review findings: fix every `blocking` and every `should` you agree with, one line of why for each you decline, `moderator gate` again, re-shoot and republish the proof page when a fix changes what a screen shows, push, and hand back the lines `fixed in <sha>` / `declined: <why>`.
 
 Escalate with one of exactly two shapes, as the last line of your message and nothing after it:
 
@@ -35,7 +36,7 @@ Escalate with one of exactly two shapes, as the last line of your message and no
 When done, end your message with this block and nothing after it:
 
 HANDBACK
-{"status":"done","issue":"ABC-0","branch":"wt/ABC-0-x","pr":0,"scope":["<package>"],"gate":"<tree hash from the GREEN gate line>","tests":"added 3 (path) | updated 2 | n/a: <why>","review":{"model":"sonnet","findings":0,"fixed":0,"declined":0,"declinedWhy":""},"notes":"one line, only what the parent must know","papercuts":["one line per thing that cost you time and should not have: a wrong scope rule, a missing command in the repo map, a flaky test"]}
+{"status":"done","issue":"ABC-0","branch":"wt/ABC-0-x","pr":0,"scope":["<package>"],"gate":"<tree hash from the GREEN gate line>","tests":"added 3 (path) | updated 2 | n/a: <why>","review":{"model":"sonnet","findings":0,"fixed":0,"declined":0,"declinedWhy":""},"proof":"https://claude.ai/... | none: <why nothing visible changed>","notes":"one line, only what the parent must know","papercuts":["one line per thing that cost you time and should not have: a wrong scope rule, a missing command in the repo map, a flaky test"]}
 
 status is `done`, `blocked` (you could not finish) or `partial` (turn limit; say in notes exactly where you stopped and what is next).
 

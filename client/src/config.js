@@ -57,6 +57,8 @@ const schema = z.strictObject({
   directToMain: z.array(z.string().min(1)).optional(),
   /** Only the main session may edit these; a subagent puts its suggestion in its hand-back instead. */
   protectedPaths: z.array(z.string()).default([]),
+  /** A diff touching these needs a proof page: the hand-back's `proof` is an Artifact URL, never "none: ...". */
+  proofPaths: z.array(z.string().min(1)).optional(),
   papercuts: z.string().default('docs/papercuts.md'),
   /** Docs every session reads in full right after CLAUDE.md, at start and after a compaction. */
   readAtStart: z.array(z.strictObject({ path: z.string(), why: z.string() })).default([]),

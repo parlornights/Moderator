@@ -3,18 +3,22 @@
 
 import path from 'node:path';
 
-import { treeHash } from './diff.js';
+import { matcher, requireConfig } from './config.js';
+import { changedFiles, treeHash } from './diff.js';
 import { computeRisk } from './risk.js';
 import { issueId, readJson, workDir } from './work.js';
 
 export const SHAPE = {
-  done: '{"status":"done","issue":"ABC-1","branch":"abc-1-x","pr":0,"scope":["<package>"],"gate":"<tree hash from the GREEN gate line>","tests":"added 3 (path) | updated 2 | n/a: <why>","review":{"model":"sonnet","findings":0,"fixed":0,"declined":0,"declinedWhy":""},"notes":"","papercuts":[]}',
+  done: '{"status":"done","issue":"ABC-1","branch":"abc-1-x","pr":0,"scope":["<package>"],"gate":"<tree hash from the GREEN gate line>","tests":"added 3 (path) | updated 2 | n/a: <why>","review":{"model":"sonnet","findings":0,"fixed":0,"declined":0,"declinedWhy":""},"proof":"https://claude.ai/... | none: <why nothing visible changed>","notes":"","papercuts":[]}',
   blocked: 'BLOCKED: <one line: what is outside your reach>',
   decision: 'NEEDS DECISION: <question> | options: A / B | recommend: A because <one line>',
 };
 
+const PROOF_URL = /^https:\/\/claude\.ai\/\S+$/;
+const PROOF_NONE = /^none:\s*\S/;
+
 /**
- * @typedef {{ status: 'done' | 'blocked' | 'partial', issue: string, branch: string, pr?: number, scope: string[], gate?: string, tests: string, review?: { model: string, findings: number, fixed: number, declined: number, declinedWhy: string }, notes: string, papercuts: string[] }} Handback
+ * @typedef {{ status: 'done' | 'blocked' | 'partial', issue: string, branch: string, pr?: number, scope: string[], gate?: string, tests: string, review?: { model: string, findings: number, fixed: number, declined: number, declinedWhy: string }, proof?: string, notes: string, papercuts: string[] }} Handback
  * @typedef {{ ok: boolean, kind: 'none' | 'blocked' | 'decision' | 'handback', errors: string[], text?: string, handback?: Handback }} Parsed
  */
 
@@ -65,13 +69,16 @@ export function parseHandback(text) {
     if (!hb.review || !['opus', 'sonnet'].includes(hb.review.model)) errors.push('"done" needs review.model (opus or sonnet, from moderator risk): the parent runs the reviewer with it');
     if (hb.review && hb.review.declined > 0 && !hb.review.declinedWhy) errors.push('declined review findings need "declinedWhy"');
   }
+  if (hb.proof !== undefined && hb.proof !== null && hb.proof !== '') {
+    if (typeof hb.proof !== 'string' || !(PROOF_URL.test(hb.proof) || PROOF_NONE.test(hb.proof))) errors.push('"proof" must be an Artifact URL (https://claude.ai/...) or "none: <reason>"');
+  }
   if (!/}\s*(```)?\s*$/.test(after)) errors.push('nothing may follow the HANDBACK block');
   return { ok: errors.length === 0, kind: 'handback', handback: hb, errors };
 }
 
 /**
  * Parse, then the repo checks of a `done`: a green gate for the tree as it is now, the reviewer the risk asks for,
- * tests for new source, and the branch's issue.
+ * tests for new source, the branch's issue, and a proof page when the diff touches `proofPaths`.
  * @param {string} text
  * @param {{ base?: string }} [opts]
  */
@@ -91,6 +98,14 @@ export function checkHandback(text, { base } = {}) {
   const risk = computeRisk({ base });
   if (risk.model === 'opus' && hb.review?.model !== 'opus') errors.push('moderator risk says this diff needs an opus review: set review.model to "opus"');
   if (risk.needsTests && !/^n\/a:\s*\S/.test(hb.tests)) errors.push(`${risk.srcAdded} source lines added and 0 test lines: add tests, or set "tests" to "n/a: <reason>"`);
+  const c = requireConfig();
+  if (c.proofPaths?.length) {
+    const visible = changedFiles(base || c.base).files.filter(matcher(c.proofPaths));
+    if (visible.length && !(typeof hb.proof === 'string' && PROOF_URL.test(hb.proof))) {
+      const listed = `${visible.slice(0, 5).join(', ')}${visible.length > 5 ? ` +${visible.length - 5}` : ''}`;
+      errors.push(`the diff touches proofPaths (${listed}), so "proof" must be the URL of the Artifact page with the screenshots (it is ${hb.proof ? JSON.stringify(hb.proof) : 'missing'})`);
+    }
+  }
   const id = issueId();
   if (id && hb.issue.toUpperCase() !== id) errors.push(`"issue" ${hb.issue} does not match the branch (${id})`);
   return { ...res, ok: errors.length === 0, errors, warnings };
