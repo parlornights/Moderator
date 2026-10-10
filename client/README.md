@@ -141,11 +141,10 @@ Only `issuePattern` is required. A check runs `when` lintable files changed (`fi
 `{filters}` is pnpm's `-r` for a global change, else `--filter "...<package>"` per changed package. `risk` decides
 the reviewer: a high path or a large diff asks for opus, and Jev may raise it, never lower it. Jev's own thresholds
 live in the service. `directToMain` lists the paths `moderator push-main` may take to the default branch; an entry
-ending in `/` is a folder, any other entry one file. `proofPaths` lists the paths whose change is visible: when a
-unit's diff against the base touches one, a hand-back with a missing or empty `proof` is refused, naming the matched
-paths. `proof` is the URL of the Artifact page with the screenshots, or `none: <reason>` when nothing visible changed
-(a refactor, a hook, a type), and the reviewer judges whether the reason holds. Without `proofPaths` no proof is
-required.
+ending in `/` is a folder, any other entry one file. `proofPaths` lists the paths whose change is visible. A hand-back's
+`proof` is the URL of the Artifact page with the screenshots; when the diff touches `proofPaths`, a missing proof is
+refused, naming the matched paths; `none: <reason>` is accepted when nothing visible changed (the reviewer judges the
+reason). Without `proofPaths` no proof is required.
 
 ## Develop
 

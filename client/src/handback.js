@@ -103,7 +103,7 @@ export function checkHandback(text, { base } = {}) {
     const visible = changedFiles(base || c.base).files.filter(matcher(c.proofPaths));
     if (visible.length && !hb.proof) {
       const listed = `${visible.slice(0, 5).join(', ')}${visible.length > 5 ? ` +${visible.length - 5}` : ''}`;
-      errors.push(`the diff touches proofPaths (${listed}), so "proof" is required: the URL of the Artifact page with the screenshots, or "none: <reason>" when nothing visible changed`);
+      errors.push(`the diff touches proofPaths (${listed}): proof is missing: give the Artifact URL, or none: <reason> when nothing visible changed`);
     }
   }
   const id = issueId();
