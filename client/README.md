@@ -74,15 +74,17 @@ run.
 A unit is the `unit` or `unit-deep` agent, or the same from a plugin (`moderator:unit`); the matchers above take both,
 whatever the plugin is called, as the hooks do.
 
-The issue is the one the branch name carries (`issuePattern`). On a branch that carries none, the Stop hook takes it
-from the title of the branch's open PR and keeps it in git config (`branch.<name>.moderatorIssue`), where every hook
-after reads it; with no issue there either, it commits nothing and holds the turn once per session to say the task has
-no issue. GitHub is read with `gh api` (REST): a cloud session cannot reach the GraphQL API that `gh pr view` uses.
+The issue is the one the branch name carries (`issuePattern`). On a branch that carries none, the session-start and
+Stop hooks take it from the title of the branch's open PR and keep it in git config (`branch.<name>.moderatorIssue`),
+where every hook after reads it. A title naming several issues, several open PRs for the branch, or a failed lookup
+sets none. With no issue, the Stop hook commits nothing and holds the turn once per session to say the task has no
+issue and what the PR lookup found. GitHub is read with `gh api` (REST): a cloud session cannot reach the GraphQL API that `gh pr view` uses.
 The ledger is `.work/<ISSUE>/`: `handoff.md`, `events.jsonl`, `running.json`, the gate's results and logs.
 
 `running.json` lists the units of the current session. SubagentStop takes a unit out of every ledger that holds it,
-the main checkout's included when the unit worked in its own worktree; an entry of another session, or one older than
-a day, is dropped at session start and at the next unit start, and never counted as running.
+the main checkout's included when the unit worked in its own worktree. An entry of another session, or one older than
+a day, is dropped at session start and at the next unit start, and never counted as running; an entry with no
+session (written by an earlier client) is judged by its age alone.
 
 The gate's tree hash is the id of the tree `git add -A` would commit (untracked files that are not ignored included,
 `.work/` left out), so a gate run before `git add` matches the commit that follows it.

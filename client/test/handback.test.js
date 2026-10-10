@@ -56,7 +56,11 @@ test('a gate run before `git add` holds for the commit that follows it: untracke
   process.chdir(r.dir);
   r.put('a.js', 'x');
   r.put('.gitignore', 'build/\n');
-  await cli(['gate'], { cwd: r.dir });
+  const tmp = fs.mkdtempSync(path.join(r.scratch, 'tmp-'));
+  await cli(['gate'], { cwd: r.dir, env: { TMPDIR: tmp } });
+  assert.equal(r.git('diff', '--cached', '--name-only'), '', 'the real index is untouched');
+  assert.match(r.git('status', '--porcelain'), /\?\? a\.js/);
+  assert.deepEqual(fs.readdirSync(tmp), [], 'no scratch index is left behind');
   r.put('build/out.js', 'ignored, never committed');
   r.git('add', '-A');
   r.git('commit', '-qm', 'a');

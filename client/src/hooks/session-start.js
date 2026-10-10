@@ -11,7 +11,7 @@ import { root } from '../git.js';
 import { writeHandoff } from '../handoff.js';
 import { fitSessionContext, orient } from '../orient.js';
 import { papercutPointer } from '../papercut.js';
-import { appendEvent, issueId, runningUnits } from '../work.js';
+import { appendEvent, issueFromPr, issueId, runningUnits } from '../work.js';
 
 import { context } from './io.js';
 
@@ -27,7 +27,8 @@ export function docsPointer() {
 /** @param {any} input */
 export default async function sessionStart(input) {
   const source = input.source || 'startup';
-  const issue = issueId();
+  // A branch that names no issue takes its open PR's, before anything is written, so the ledger is never split.
+  const issue = issueId() || issueFromPr().issue;
   if (issue && source === 'compact') writeHandoff({ transcriptPath: input.transcript_path, source: 'compact' });
   if (issue) appendEvent('session-start', { source, session: input.session_id || null });
   // Units of an earlier session are gone with it; their stops went unrecorded.

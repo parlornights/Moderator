@@ -33,8 +33,8 @@ export function ghApi(route) {
 /** @typedef {{ number: number, title: string, url: string, draft: boolean }} OpenPr */
 
 /**
- * The open pull request whose head is `b` in the origin repository: `pr` is null when there is none. A failed lookup
- * says why, so it is never read as "none".
+ * The open pull request whose head is `b` in the origin repository: `pr` is null when there is none. A failed lookup,
+ * or several open PRs for one head, says why, so it is never read as "none" or as one of them.
  * @param {string} [b]
  * @returns {{ ok: true, pr: OpenPr | null, slug: string } | { ok: false, why: string }}
  */
@@ -43,6 +43,8 @@ export function openPr(b = branch()) {
   if (!slug) return { ok: false, why: 'origin is not a GitHub repository' };
   const r = ghApi(`repos/${slug}/pulls?state=open&head=${encodeURIComponent(`${slug.split('/')[0]}:${b}`)}`);
   if (!r.ok) return r;
-  const p = Array.isArray(r.data) ? r.data[0] : null;
+  const all = Array.isArray(r.data) ? r.data : [];
+  if (all.length > 1) return { ok: false, why: `several open PRs for the branch: ${all.map((x) => `#${x.number}`).join(', ')}` };
+  const p = all[0];
   return { ok: true, slug, pr: p ? { number: p.number, title: String(p.title || ''), url: p.html_url, draft: Boolean(p.draft) } : null };
 }

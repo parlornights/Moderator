@@ -90,6 +90,8 @@ export function packageOf(file) {
  * A short hash of the working tree: the id of the tree `git add -A` would commit (untracked files that are not
  * ignored included), built in a scratch copy of the index so the real one is untouched. Same tree, same hash, before
  * the commit and after it. .work/ is left out, so the gate's own logs and events never invalidate a green result.
+ * Null when git fails: a null hash matches no gate result.
+ * @returns {string | null}
  */
 export function treeHash() {
   const index = git(['rev-parse', '--path-format=absolute', '--git-path', 'index']);
@@ -97,9 +99,9 @@ export function treeHash() {
   try {
     if (index && fs.existsSync(index)) fs.copyFileSync(index, scratch);
     const env = { ...process.env, GIT_INDEX_FILE: scratch };
-    git(['add', '-A', ...NOT_WORK], root(), env);
-    git(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', '.work'], root(), env);
-    return (git(['write-tree'], root(), env) || '').slice(0, 12);
+    if (git(['add', '-A', ...NOT_WORK], root(), env) === null) return null;
+    if (git(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', '.work'], root(), env) === null) return null;
+    return git(['write-tree'], root(), env)?.slice(0, 12) || null;
   } finally {
     fs.rmSync(scratch, { force: true });
   }

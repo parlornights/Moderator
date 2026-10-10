@@ -92,6 +92,7 @@ export function checkHandback(text, { base } = {}) {
   const gate = readJson(path.join(workDir(), 'gate.json'));
   const now = treeHash();
   if (!gate?.ok) errors.push('no GREEN gate result on this branch: run `moderator gate`');
+  else if (!now) errors.push('the tree could not be hashed (git failed): run `moderator gate` again once git works');
   else if (gate.treeHash !== now) errors.push(`the tree changed after the last green gate (${gate.treeHash} -> ${now}): run \`moderator gate\` again`);
   else if (hb.gate !== gate.treeHash) warnings.push(`"gate" says ${hb.gate}, the green run is ${gate.treeHash}`);
 

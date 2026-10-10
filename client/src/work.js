@@ -30,18 +30,22 @@ export function issueId() {
 }
 
 /**
- * The branch names no issue: the issue its open PR's title names, kept for the branch so every hook after reads it
- * through issueId(). Null when there is no open PR, its title names none, or GitHub did not answer.
+ * The branch names no issue: the one issue its open PR's title names, kept for the branch so every hook after reads it
+ * through issueId(). Otherwise `issue` is null and `why` says what was found: no open PR, a title naming none or
+ * several, or the lookup that failed.
+ * @returns {{ issue: string | null, why: string }}
  */
 export function issueFromPr() {
   const re = issuePattern();
   const b = branch();
-  if (!re || isMainBranch(b)) return null;
+  if (!re || isMainBranch(b)) return { issue: null, why: 'no issue pattern, or the main branch' };
   const r = openPr(b);
-  const m = r.ok && r.pr ? r.pr.title.match(re) : null;
-  if (!m) return null;
-  git(['config', prIssueKey(b), m[0].toUpperCase()]);
-  return m[0].toUpperCase();
+  if (!r.ok) return { issue: null, why: `the PR lookup failed: ${r.why}` };
+  if (!r.pr) return { issue: null, why: 'no open PR for the branch' };
+  const ids = [...new Set([...r.pr.title.matchAll(new RegExp(re.source, 'gi'))].map((m) => m[0].toUpperCase()))];
+  if (ids.length !== 1) return { issue: null, why: ids.length ? `PR #${r.pr.number}'s title names more than one issue: ${ids.join(', ')}` : `PR #${r.pr.number}'s title names none` };
+  git(['config', prIssueKey(b), ids[0]]);
+  return { issue: ids[0], why: `PR #${r.pr.number}'s title` };
 }
 
 /** .work/<issue>/ (or .work/_unassigned/) of this checkout. Created by the first write, so reading creates nothing. */
@@ -96,7 +100,8 @@ const RUNNING_MAX_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The units .work/<issue>/running.json holds as running: an entry of another session (when `session` is known) or
- * one started more than a day ago is left out, and with `prune` removed from the file.
+ * one started more than a day ago is left out, and with `prune` removed from the file. An entry with no session (the
+ * previous client's) is judged by its age alone.
  * @param {{ session?: string | null, now?: number, prune?: boolean }} [opts]
  * @returns {Record<string, RunningEntry>}
  */
@@ -104,7 +109,7 @@ export function runningUnits({ session = null, now = Date.now(), prune = false }
   const p = path.join(workDir(), 'running.json');
   /** @type {Record<string, RunningEntry>} */
   const all = readJson(p, {}) || {};
-  const live = Object.fromEntries(Object.entries(all).filter(([, u]) => (!session || u?.session === session) && now - (Date.parse(u?.started ?? '') || 0) < RUNNING_MAX_MS));
+  const live = Object.fromEntries(Object.entries(all).filter(([, u]) => (!session || !u?.session || u.session === session) && now - (Date.parse(u?.started ?? '') || 0) < RUNNING_MAX_MS));
   if (prune && Object.keys(live).length < Object.keys(all).length) writeJson(p, live);
   return live;
 }

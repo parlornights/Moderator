@@ -53,19 +53,22 @@ async function questionCheck(last) {
 }
 
 /**
- * Neither the branch nor its open PR names an issue: nothing is committed or pushed, and the session is told once, so
- * a task never goes on without its ledger unnoticed. Git config keeps which session was told.
+ * Neither the branch nor its open PR names one issue: nothing is committed or pushed, and the session is told once,
+ * with what the PR lookup found, so a task never goes on without its ledger unnoticed. Git config keeps which session
+ * was told.
+
  * @param {string} b
+ * @param {string} why
  * @param {any} input
  */
-function noIssue(b, input) {
+function noIssue(b, why, input) {
   if (input.stop_hook_active) return;
   const key = `branch.${b}.moderatorNoIssueSession`;
   const session = String(input.session_id || 'unknown');
   if (git(['config', '--get', key]) === session) return;
   git(['config', key, session]);
   return block(
-    `This task has no issue: neither the branch "${b}" nor an open PR's title names one (${issuePattern()?.source}), so the Stop hook commits, pushes and checks nothing here. Put the issue id in the branch name (git branch -m) or in the PR's title; file the issue first with \`moderator linear issue\` if there is none. Then stop again.`,
+    `This task has no issue: the branch "${b}" names none (${issuePattern()?.source}), and ${why}. The Stop hook commits, pushes and checks nothing here. Put the issue id in the branch name (git branch -m) or in the PR's title; file the issue first with \`moderator linear issue\` if there is none. Then stop again.`,
   );
 }
 
@@ -73,8 +76,12 @@ function noIssue(b, input) {
 export default async function stop(input) {
   const b = branch();
   if (isMainBranch(b) || !issuePattern()) return;
-  const issue = issueId() || issueFromPr();
-  if (!issue) return noIssue(b, input);
+  let issue = issueId();
+  if (!issue) {
+    const found = issueFromPr();
+    if (!found.issue) return noIssue(b, found.why, input);
+    issue = found.issue;
+  }
   // The agent stopped in the middle of a merge (to ask about a conflict, say): the checks run, but nothing is
   // committed or pushed until the merge ends, so no conflict marker leaves the machine.
   const midMerge = operationInProgress();

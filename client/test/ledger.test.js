@@ -15,10 +15,10 @@ test('a unit start is recorded in running.json and as an event', async () => {
 test("a unit start records its session, and drops other sessions' units and units started more than a day ago", async () => {
   const r = repo({ branch: 'cd-1-x' });
   const now = new Date().toISOString();
-  r.put('.work/CD-1/running.json', JSON.stringify({ mine: { agent_type: 'unit', started: now, session: 's1' }, other: { agent_type: 'unit', started: now, session: 's0' }, old: { agent_type: 'unit', started: '2026-01-01T00:00:00Z', session: 's1' } }));
+  r.put('.work/CD-1/running.json', JSON.stringify({ mine: { agent_type: 'unit', started: now, session: 's1' }, other: { agent_type: 'unit', started: now, session: 's0' }, old: { agent_type: 'unit', started: '2026-01-01T00:00:00Z', session: 's1' }, legacy: { agent_type: 'unit', started: now } }));
   await hook('subagent-start', { agent_id: 'new', agent_type: 'unit', session_id: 's1' }, { cwd: r.dir });
   const running = JSON.parse(r.read('.work/CD-1/running.json'));
-  assert.deepEqual(Object.keys(running), ['mine', 'new']);
+  assert.deepEqual(Object.keys(running), ['mine', 'legacy', 'new'], "the previous client's entries, with no session, are judged by age");
   assert.equal(running.new.session, 's1');
 });
 

@@ -91,11 +91,13 @@ test("the unit's papercuts go into the log, by category", async () => {
   assert.match(log, /\| CD-1 \| protocol \| the brief lacked the design link/);
 });
 
-test('a stop with no last message goes through, and the unit is no longer running', async () => {
+test('a stop with no last message goes through, and the unit is no longer running, its block count gone', async () => {
   const { r, stop, events } = await setup();
+  assert.match((await stop('I think it works.')).reason, /block 1 of 3/);
   assert.equal(await stop(undefined), null);
+  assert.deepEqual(JSON.parse(r.read('.work/CD-1/stop-blocks.json')), {});
   assert.deepEqual(JSON.parse(r.read('.work/CD-1/running.json')), {});
-  assert.deepEqual(events(), ['unit:stop']);
+  assert.deepEqual(events(), ['unit:blocked', 'unit:stop']);
 });
 
 test("a unit that worked in its own worktree stops out of the session's running.json, and its event lands there", async () => {

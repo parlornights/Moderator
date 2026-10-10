@@ -99,8 +99,20 @@ test("orient finds the branch's open PR over GitHub's REST API, and says unknown
   assert.match(found.stdout, /PR for this branch: #12 open clean https:\/\/github\.com\/acme\/app\/pull\/12 "CD-12: fix the thing"/);
   const none = await cli(['orient'], { cwd: r.dir, env: fakeGh(r.scratch, { 'repos/acme/app/pulls?state=open&head=acme%3Aclaude%2Ffix-thing': [] }) });
   assert.match(none.stdout, /PR for this branch: none for this branch/);
+  const two = [1, 2].map((number) => ({ number, title: 't', html_url: 'u', draft: false }));
+  const several = await cli(['orient'], { cwd: r.dir, env: fakeGh(r.scratch, { 'repos/acme/app/pulls?state=open&head=acme%3Aclaude%2Ffix-thing': two }) });
+  assert.match(several.stdout, /PR for this branch: unknown \(several open PRs for the branch: #1, #2\)/);
   const down = await cli(['orient'], { cwd: r.dir, env: fakeGh(r.scratch, {}) });
   assert.match(down.stdout, /PR for this branch: unknown \(gh: Not Found \(HTTP 404\)\)/);
+});
+
+test("a session on a branch that names no issue takes its PR's, so the ledger starts under that issue", async () => {
+  const r = repo({ branch: 'claude/fix-thing' });
+  r.git('remote', 'add', 'origin', 'https://github.com/acme/app');
+  const gh = fakeGh(r.scratch, { 'repos/acme/app/pulls?state=open&head=acme%3Aclaude%2Ffix-thing': [{ number: 12, title: 'CD-12: fix', html_url: 'u', draft: false }] });
+  const out = (await hook('session-start', { source: 'startup', session_id: 's1' }, { cwd: r.dir, env: gh })).json;
+  assert.match(out.hookSpecificOutput.additionalContext, /issue CD-12/);
+  assert.deepEqual(fs.readdirSync(`${r.dir}/.work`), ['CD-12']);
 });
 
 test("orient lists only this session's units started within a day, and a session start prunes the rest", async () => {
@@ -157,5 +169,5 @@ test('a client that never installs costs the session its start context, said in 
   await cli(['sync'], { cwd: r.dir });
   const out = /** @type {any} */ (await launch(r.dir, { MODERATOR_INSTALL_WAIT: '1' }));
   assert.equal(out.status, 0);
-  assert.match(JSON.parse(out.stdout).systemMessage, /the client did not load within 1 s of the session start/);
+  assert.match(JSON.parse(out.stdout).systemMessage, /the client did not load within 1 s of the session start \(Error: Cannot find module '[^']*moderator\.js'\)/);
 });

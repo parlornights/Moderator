@@ -56,12 +56,6 @@ function diffText() {
 /** @param {any} input */
 export default async function subagentStop(input) {
   const id = input.agent_id || 'unit';
-  // No last message (Claude Code sends none for some stops): nothing to judge, so it goes through, and is recorded.
-  if (input.last_assistant_message === undefined) {
-    const at = forgetUnit(id);
-    appendEvent('unit:stop', { id: id.slice(0, 8), why: 'no last message' }, at ?? undefined);
-    return;
-  }
   const dir = workDir();
   const countsPath = path.join(dir, 'stop-blocks.json');
   const counts = readJson(countsPath, {});
@@ -85,6 +79,9 @@ export default async function subagentStop(input) {
     appendEvent('unit:blocked', { id: id.slice(0, 8), n: blocks + 1, why: reason.split('\n')[0].slice(0, 120) });
     return block(`${reason}\n\n(block ${blocks + 1} of ${MAX_BLOCKS}; after ${MAX_BLOCKS} you are let through with status "blocked")`);
   };
+
+  // No last message (Claude Code sends none for some stops): nothing to judge, so it goes through, and is recorded.
+  if (input.last_assistant_message === undefined) return finish('stop', { why: 'no last message' });
 
   const last = String(input.last_assistant_message);
   const parsed = parseHandback(last);

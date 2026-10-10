@@ -198,10 +198,24 @@ test('with no issue in the branch or a PR title, the stop is held once per sessi
   const stop = async (input) => (await hook('stop', input, { cwd: r.dir, env })).json;
   const first = await stop({ session_id: 's' });
   assert.equal(first.decision, 'block');
-  assert.match(first.reason, /This task has no issue: neither the branch "claude\/tidy-up" nor an open PR's title names one/);
+  assert.match(first.reason, /This task has no issue: the branch "claude\/tidy-up" names none .*, and PR #4's title names none\./);
   assert.equal(await stop({ session_id: 's', stop_hook_active: true }), null);
   assert.equal(await stop({ session_id: 's' }), null, 'once per session');
   assert.equal((await stop({ session_id: 's2' })).decision, 'block');
   assert.match(r.git('status', '--porcelain'), /b\.js/);
   assert.equal(fs.existsSync(path.join(r.dir, '.work')), false);
+});
+
+test('a PR title naming two issues, several open PRs, or a failed lookup sets no issue, and the block says which', async () => {
+  const cases = [
+    [{ [PRS]: [{ number: 4, title: 'CD-9 and cd-10: tidy', html_url: 'u', draft: false }] }, /PR #4's title names more than one issue: CD-9, CD-10/],
+    [{ [PRS]: [{ number: 4, title: 'CD-9', html_url: 'u', draft: false }, { number: 5, title: 'CD-10', html_url: 'u', draft: false }] }, /the PR lookup failed: several open PRs for the branch: #4, #5/],
+    [{}, /the PR lookup failed: gh: Not Found \(HTTP 404\)/],
+  ];
+  for (const [routes, why] of cases) {
+    const r = unnamedBranch();
+    const out = (await hook('stop', { session_id: 's' }, { cwd: r.dir, env: fakeGh(r.scratch, routes) })).json;
+    assert.match(out.reason, why);
+    assert.throws(() => r.git('config', '--get', 'branch.claude/tidy-up.moderatorIssue'));
+  }
 });
