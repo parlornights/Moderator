@@ -1,5 +1,5 @@
 // A unit's last message is a hand-back the parent can act on: its shape, a green gate for the tree as it is, the
-// reviewer the risk asks for, tests for new source, and the branch's issue.
+// reviewer the risk asks for, tests for new source, the branch's issue, and a proof page for a diff touching proofPaths.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -91,4 +91,38 @@ test('a sensitive path needs an opus review, new source needs tests, and the iss
   assert.match(errors, /"issue" CD-9 does not match the branch \(CD-2\)/);
   const fixed = checkHandback(handback({ issue: 'CD-2', tests: 'n/a: a config move', review: { model: 'opus', findings: 0, fixed: 0, declined: 0, declinedWhy: '' } }));
   assert.equal(fixed.ok, true, fixed.errors.join());
+});
+
+test('a diff touching proofPaths needs a "proof": an Artifact URL, or "none: <reason>" for the reviewer to judge', async () => {
+  const r = repo({ branch: 'cd-5-x', config: { ...CONFIG, proofPaths: ['app/screens/**'] } });
+  process.chdir(r.dir);
+  r.put('lib/a.js', 'x');
+  r.put('lib/a.test.js', 'x');
+  await cli(['gate'], { cwd: r.dir });
+  const none = checkHandback(handback({ issue: 'CD-5', proof: 'none: a library change' }));
+  assert.equal(none.ok, true, none.errors.join());
+
+  r.put('app/screens/Lobby.js', 'x');
+  await cli(['gate'], { cwd: r.dir });
+  const missing = checkHandback(handback({ issue: 'CD-5' }));
+  assert.equal(missing.ok, false);
+  assert.match(missing.errors.join(), /touches proofPaths \(app\/screens\/Lobby\.js\), so "proof" is required/);
+  assert.match(checkHandback(handback({ issue: 'CD-5', proof: '' })).errors.join(), /"proof" is required/);
+  const refactor = checkHandback(handback({ issue: 'CD-5', proof: 'none: refactor' }));
+  assert.equal(refactor.ok, true, refactor.errors.join());
+  const url = checkHandback(handback({ issue: 'CD-5', proof: 'https://claude.ai/artifact/abc' }));
+  assert.equal(url.ok, true, url.errors.join());
+});
+
+test('with no proofPaths no proof is required, and a proof given is an Artifact URL or "none: <reason>"', async () => {
+  const r = repo({ branch: 'cd-6-x', config: CONFIG });
+  process.chdir(r.dir);
+  r.put('app/screens/Lobby.js', 'x');
+  r.put('app/screens/Lobby.test.js', 'x');
+  await cli(['gate'], { cwd: r.dir });
+  const res = checkHandback(handback({ issue: 'CD-6' }));
+  assert.equal(res.ok, true, res.errors.join());
+  assert.equal(parseHandback(handback({ proof: 'none: a refactor' })).ok, true);
+  assert.match(parseHandback(handback({ proof: 'http://example.com/shots' })).errors.join(), /"proof" must be an Artifact URL/);
+  assert.match(parseHandback(handback({ proof: 'none:' })).errors.join(), /"proof" must be an Artifact URL/);
 });

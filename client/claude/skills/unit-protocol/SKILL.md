@@ -18,8 +18,9 @@ You get one ticket and one branch. You finish it, or you stop with a reason the 
 
 1. `moderator gate` until the first line is GREEN. Fix causes, not symptoms. Never edit `moderator.config.json` to make a check go away; that is a papercut for the parent.
 2. `moderator risk` prints which model reviews (deterministic path and size rules, raised to opus when Jev reads the diff as needing a strong review). Put it in the hand-back's `review.model`. You do not spawn the reviewer: a subagent cannot start agents. The parent runs it on your pushed diff and posts the review record.
-3. Commit, push, open the PR if none exists. GitHub from a sandbox is REST only (`gh pr create`, `gh pr view` and GraphQL answer 403): open it with `gh api -X POST repos/{owner}/{repo}/pulls -f title='<what> (<ISSUE>)' -f head=<branch> -f base=main -F body=@<summary>`, read it with `gh api repos/{owner}/{repo}/pulls/<n>`. Hand back.
-4. Resumed with review findings: fix every `blocking` and every `should` you agree with, one line of why for each you decline, `moderator gate` again, push, hand back `fixed in <sha>` / `declined: <why>` per finding.
+3. A UI change (anything a user sees) is verified in headless Chromium on the built web export: a screenshot of each changed screen in light and in dark, plus every state the brief names. Publish the shots as ONE Artifact page, a caption per shot naming the screen, theme and state. Its URL goes in the hand-back's `proof` and in the PR description as `Proof: <url>`. With nothing visible changed, `proof` is `none: <reason>`.
+4. Commit, push, open the PR if none exists. GitHub from a sandbox is REST only (`gh pr create`, `gh pr view` and GraphQL answer 403): open it with `gh api -X POST repos/{owner}/{repo}/pulls -f title='<what> (<ISSUE>)' -f head=<branch> -f base=main -F body=@<summary>`, read it with `gh api repos/{owner}/{repo}/pulls/<n>`. Hand back.
+5. Resumed with review findings: fix every `blocking` and every `should` you agree with, one line of why for each you decline, `moderator gate` again, re-shoot and republish the proof page when a fix changes what a screen shows, push, hand back `fixed in <sha>` / `declined: <why>` per finding.
 
 ## Ending your message
 
@@ -29,12 +30,13 @@ Hand-back:
 
 ```
 HANDBACK
-{"status":"done","issue":"ABC-123","branch":"wt/ABC-123-x","pr":87,"scope":["<package>"],"gate":"a1b2c3d4e5f6","tests":"added 3 (apps/app/src/screens/game/__tests__/Lobby.test.tsx)","review":{"findings":2,"fixed":2,"declined":0,"declinedWhy":""},"notes":"","papercuts":["scope: apps/app/src/theme/** matched no e2e rule but changes every screen"]}
+{"status":"done","issue":"ABC-123","branch":"wt/ABC-123-x","pr":87,"scope":["<package>"],"gate":"a1b2c3d4e5f6","tests":"added 3 (apps/app/src/screens/game/__tests__/Lobby.test.tsx)","review":{"findings":2,"fixed":2,"declined":0,"declinedWhy":""},"proof":"https://claude.ai/artifact/...","notes":"","papercuts":["scope: apps/app/src/theme/** matched no e2e rule but changes every screen"]}
 ```
 
 - `status`: `done`, `blocked` (could not finish; say what in `notes`), `partial` (turn limit; `notes` says exactly where you stopped and the next step).
 - `gate`: the tree hash from your last GREEN gate line.
 - `tests`: `added N (path)`, `updated N`, or `n/a: <reason>`.
+- `proof`: the URL of the Artifact page with the screenshots, or `none: <reason>` when nothing visible changed. When the diff touches `proofPaths` in `moderator.config.json`, a missing or empty proof is refused. A `none:` reason is judged by the reviewer; never fake a screenshot.
 - `papercuts`: one line each, `category: text -> fix`. Categories: gate, scope, protocol, repo, flake. Empty array if none.
 - `notes`: one line, only what the parent must know. Not a summary of your work; the PR has that.
 
