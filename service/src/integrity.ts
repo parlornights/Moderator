@@ -211,8 +211,11 @@ async function publish(env: Env, gh: GitHub, e: PullRequestEvent, run: Run): Pro
  */
 async function pendingKey(f: Finding, sha: string): Promise<string> {
   if (f.patch !== null) return hunkHash(f);
-  return `${await hunkHash(f)}\n${f.reason}${blind(f) && !f.file.startsWith('(') ? `\n${sha}` : ''}`;
+  return `${await hunkHash(f)}\n${f.reason}${blindFile(f) ? `\n${sha}` : ''}`;
 }
+
+/** A blind test file, not one of the placeholders a run records about itself. */
+const blindFile = (f: Finding) => f.patch === null && blind(f) && f.file !== '(check)' && f.file !== '(whole PR)';
 
 const counts = (keys: string[]) => keys.reduce((m, key) => m.set(key, (m.get(key) ?? 0) + 1), new Map<string, number>());
 /** How many of `a`'s keys `b` does not hold, counting each key as often as it occurs. */
@@ -238,7 +241,8 @@ async function changedSince(env: Env, e: PullRequestEvent, findings: Finding[]):
   const before = counts(await Promise.all(earlierFindings.map((f) => pendingKey(f, earlier.sha))));
   const keyed = await Promise.all(findings.map(async (f) => [f, await pendingKey(f, k.sha)] as const));
   const now = counts(keyed.map(([, key]) => key));
-  const gone = missing(before, now);
+  // A blind file is asked about again on every run, not resolved: it never counts as no longer flagged.
+  const gone = missing(counts(await Promise.all(earlierFindings.filter((f) => !blindFile(f)).map((f) => pendingKey(f, earlier.sha)))), now);
   const left = new Map(before);
   const added = keyed.filter(([, key]) => {
     const c = left.get(key) ?? 0;

@@ -461,6 +461,9 @@ describe('PR comments ping the owner once per set of pending findings', () => {
     files = [blind];
     await hook(event('r1'));
     await hook(event('r2'));
+    // A blind file pings on every undecided push.
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('Changed since r1: 1 new or changed (`e2e/fixtures.e2e.ts`).');
     await decide('r1', 'decision=approve');
     const n = comments.length;
     await hook(event('r3'));
@@ -514,6 +517,37 @@ describe('PR comments ping the owner once per set of pending findings', () => {
     await env.DB.exec("UPDATE integrity SET state = 'pending' WHERE sha = 'w1'");
     await hook(event('w2'));
     expect(comments).toHaveLength(2);
+  });
+
+  it('pings for a blind file in a folder whose name starts with a parenthesis', async () => {
+    files = [{ filename: '(app)/x.test.ts', status: 'modified', baseSha: 'x1' }];
+    await hook(event('y1'));
+    await hook(event('y2'));
+    expect(comments).toHaveLength(2);
+  });
+
+  it('forgets that a commit was announced when it runs again with other findings', async () => {
+    const other: ChangedFile = { filename: 'src/rules.spec.ts', status: 'modified', patch: '@@ -3 +3 @@\n-  expect(rules).toHaveLength(4);\n+  expect(rules.length).toBeGreaterThan(0);' };
+    files = [changed];
+    answers = { h1: { noul: 0.1 } };
+    await hook(event('g1'));
+    await hook(event('g2'));
+    expect(comments).toHaveLength(1);
+    // g2 runs again with another flagged hunk, and its comment fails to post.
+    files = [changed, other];
+    answers = { h1: { noul: 0.1 } };
+    const comment = gh.comment;
+    gh.comment = async () => {
+      throw new Error('GitHub is down');
+    };
+    try {
+      await hook(event('g2', 'reopened'));
+    } finally {
+      gh.comment = comment;
+    }
+    await hook(event('g3'));
+    expect(comments).toHaveLength(2);
+    expect(comments[1].body).toContain('on g3');
   });
 
   it('comments again when the earlier comment failed to post', async () => {
